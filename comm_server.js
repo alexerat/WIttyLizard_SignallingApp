@@ -5,10 +5,14 @@ var PHPUnserialize = require('php-unserialize');
 var parseCookie = require('cookie-parser');
 var mysql      = require('mysql');
 
+var dbHost = process.env.DATABASE_HOST;
+var dbUser = process.env.DATABASE_USER;
+var dbPass = process.env.DATABASE_PASSWORD;
+
 var my_sql_pool = mysql.createPool({
-  host     : 'webtest.ckiftg23dxce.us-west-2.rds.amazonaws.com',
-  user     : 'alex',
-  password : 'nevermore!123',
+  host     : dbHost,
+  user     : dbUser,
+  password : dbPass,
   database : 'Online_Comms'
 });
 
