@@ -1,2 +1,2 @@
 #!/bin/bash
-nodejs /opt/comm_server.js
+forever start /opt/comm_server.js
