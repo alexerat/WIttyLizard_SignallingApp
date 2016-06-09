@@ -1,0 +1,7 @@
+{"files": [
+        "./comm_server.ts",
+        "./typings/node.d.ts",
+        "./typings/mysql.d.ts",
+        "./typings/socket.io.d.ts",
+        "./typings/whiteboard.d.ts"
+]}
