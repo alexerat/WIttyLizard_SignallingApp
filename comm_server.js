@@ -1,3 +1,9 @@
+var _this = this;
+var ElementMessageTypes = {
+    DELETE: 0,
+    RESTORE: 1,
+    MOVE: 2,
+};
 var colourTable = [
     0xFF0000, 0x00FF00, 0x0000FF, 0xFF00FF, 0xFF7F00,
     0x8C1717, 0x70DB93, 0x00FFFF, 0x5959AB, 0xDB9370,
@@ -30,7 +36,8 @@ var my_sql_pool = mysql.createPool({
     host: dbHost,
     user: dbUser,
     password: dbPass,
-    database: 'Online_Comms'
+    database: 'Online_Comms',
+    supportBigNumbers: true
 });
 var med_io = io.of('/media');
 var bor_io = io.of('/board');
@@ -329,129 +336,66 @@ med_io.on('connection', function (socket) {
         }
     });
 });
+var Component = (function () {
+    function Component() {
+    }
+    return Component;
+}());
 var boardConnData = {};
 var connBoardUsers = {};
 var roomUserList = [];
 var roomUserCount = [];
-var sendStyle = function (nodeData, textId, socket) {
-    console.log('Sending user stylenode.');
-    var msg = {
-        serverId: textId, num: nodeData.Seq_Num, text: nodeData.Text_Data, colour: nodeData.Colour, weight: nodeData.Weight, decoration: nodeData.Decoration,
-        style: nodeData.Style, start: nodeData.Start, end: nodeData.End, userId: 0, editId: 0
-    };
-    socket.emit('STYLENODE', msg);
+var modes = [];
+var components = [];
+var registerComponent = function (modeName, ModeClass) {
+    console.log('REGISTERING COMPONENT: ' + modeName);
+    modes.push(modeName);
+    components[modeName] = new ModeClass();
 };
-var sendText = function (textData, socket) {
-    var msg = { userId: 0, serverId: textData.Entry_ID, editId: 0, num_nodes: textData.Num_Style_Nodes, editTime: textData.Edit_Time };
-    socket.emit('EDIT-TEXT', msg);
-    my_sql_pool.getConnection(function (err, connection) {
-        if (!err) {
-            connection.query('USE Online_Comms');
-            connection.query('SELECT * FROM Text_Style_Node WHERE Entry_ID = ?', [textData.Entry_ID], function (perr, prows, pfields) {
-                if (perr) {
-                    console.log('BOARD: Error while performing existing style nodes query. ' + perr);
-                }
-                else {
-                    var i;
-                    for (i = 0; i < prows.length; i++) {
-                        (function (data, textId) { setTimeout(function () { sendStyle(data, textId, socket); }, 100); })(prows[i], textData.Entry_ID);
-                    }
-                }
-                connection.release();
-            });
-        }
-        else {
-            console.log('BOARD: Error while getting database connection to send curve. ' + err);
-            connection.release();
-        }
-    });
-};
-var sendPoint = function (pointData, socket) {
-    var msg = { serverId: pointData.Entry_ID, num: pointData.Seq_Num, x: pointData.X_Loc, y: pointData.Y_Loc };
-    socket.emit('POINT', msg);
-};
-var sendCurve = function (curveData, socket) {
-    var msg = {
-        serverId: curveData.Entry_ID, num_points: curveData.Num_Control_Points, colour: curveData.Colour, userId: curveData.User_ID, size: curveData.Size,
-        x: curveData.X_Loc, y: curveData.Y_Loc, width: curveData.Width, height: curveData.Height, editTime: curveData.Edit_Time
-    };
-    socket.emit('CURVE', msg);
-    my_sql_pool.getConnection(function (err, connection) {
-        if (!err) {
-            connection.query('USE Online_Comms');
-            connection.query('SELECT * FROM Control_Points WHERE Entry_ID = ?', [curveData.Entry_ID], function (perr, prows, pfields) {
-                if (perr) {
-                    console.log('BOARD: Error while performing existing control point query. ' + perr);
-                }
-                else {
-                    var i;
-                    for (i = 0; i < prows.length; i++) {
-                        (function (data) { setTimeout(function () { sendPoint(data, socket); }, 0); })(prows[i]);
-                    }
-                }
-                connection.release();
-            });
-        }
-        else {
-            console.log('BOARD: Error while getting database connection to send curve. ' + err);
-            connection.release();
-        }
-    });
-};
+var normalizedPath = require("path").join(__dirname, "components");
+require("fs").readdirSync(normalizedPath).forEach(function (file) {
+    require("./components/" + file)(registerComponent);
+});
 var sendDataBor = function (socket) {
     my_sql_pool.getConnection(function (err, connection) {
-        connection.query('USE Online_Comms');
-        connection.query('SELECT * FROM Whiteboard_Space WHERE Room_ID = ? AND isDeleted = 0', [boardConnData[socket.id].roomId], function (err, rows, fields) {
-            if (err) {
-                connection.release();
-                console.log('BOARD: Error while performing existing curve query. ' + err);
-            }
-            else {
-                var i;
-                var data = rows;
-                for (i = 0; i < rows.length; i++) {
-                    (function (data, i) { setTimeout(function () { sendCurve(data[i], socket); }, i * 5); })(data, i);
+        if (!err) {
+            connection.query('USE Online_Comms', function (err) {
+                if (err) {
+                    console.log('BOARD: Error while setting database schema. ' + err);
+                    connection.release();
                 }
-                connection.query('SELECT * FROM Text_Space WHERE Room_ID = ? AND isDeleted = 0', [boardConnData[socket.id].roomId], function (err, rows, fields) {
-                    if (err) {
-                        connection.release();
-                        console.log('BOARD: Error while performing existing text query. ' + err);
-                    }
-                    else {
-                        for (i = 0; i < rows.length; i++) {
-                            var msg = {
-                                serverId: rows[i].Entry_ID, userId: rows[i].User_ID, size: rows[i].Size, x: rows[i].Pos_X, editCount: 0,
-                                y: rows[i].Pos_Y, width: rows[i].Width, height: rows[i].Height, editLock: rows[i].Edit_Lock, justified: rows[i].Justified,
-                                editTime: rows[i].Edit_Time
-                            };
-                            socket.emit('TEXTBOX', msg);
-                            (function (data, i) { setTimeout(function () { sendText(data[i], socket); }, i * 5 + 100); })(rows, i);
+                else {
+                    connection.query('SELECT * FROM Whiteboard_Space WHERE Room_ID = ? AND isDeleted = 0', [boardConnData[socket.id].roomId], function (err, rows, fields) {
+                        if (err) {
+                            connection.release();
+                            console.log('BOARD: Error while performing existing curve query. ' + err);
                         }
-                        connection.query('SELECT * FROM Upload_Space WHERE Room_ID = ? AND isDeleted = 0', [boardConnData[socket.id].roomId], function (err, rows, fields) {
-                            if (err) {
-                                connection.release();
-                                console.log('BOARD: Error while performing existing file query. ' + err);
-                            }
-                            else {
-                                for (i = 0; i < rows.length; i++) {
-                                    var fExt = '';
-                                    if (rows[i].Content_URL) {
-                                        fExt = rows[i].Content_URL.split('.').pop();
+                        else {
+                            var data_1 = rows;
+                            var _loop_1 = function(i) {
+                                my_sql_pool.getConnection(function (err, connection) {
+                                    if (!err) {
+                                        connection.query('USE Online_Comms', function (err) {
+                                            if (err) {
+                                                console.log('BOARD: Error while setting database schema. ' + err);
+                                                connection.release();
+                                            }
+                                            else {
+                                                components[data_1[i].Type].sendData(data_1[i], socket, connection, boardConnData[socket.id]);
+                                            }
+                                        });
                                     }
-                                    var msg = {
-                                        serverId: rows[i].Entry_ID, userId: rows[i].User_ID, x: rows[i].Pos_X, fileDesc: rows[i].File_Description,
-                                        y: rows[i].Pos_Y, width: rows[i].Width, height: rows[i].Height, url: rows[i].Content_URL, fileType: rows[i].File_Type,
-                                        extension: fExt, rotation: rows[i].Rotation, editTime: rows[i].Edit_Time
-                                    };
-                                    socket.emit('FILE-START', msg);
-                                }
-                                connection.release();
+                                });
+                            };
+                            for (var i = 0; i < rows.length; i++) {
+                                _loop_1(i);
                             }
-                        });
-                    }
-                });
-            }
-        });
+                        }
+                        connection.release();
+                    });
+                }
+            });
+        }
     });
 };
 var chkHost = function (err, rows, fields, socket, connection) {
@@ -470,7 +414,6 @@ var chkHost = function (err, rows, fields, socket, connection) {
         boardConnData[socket.id].isConnected = true;
         socket.emit('CONNOK');
         clearTimeout(boardConnData[socket.id].joinTimeout);
-        clearTimeout(boardConnData[socket.id].disconnectTimeout);
         console.log('BOARD: User ' + boardConnData[socket.id].userId + ' successfully joined room ' + boardConnData[socket.id].roomId + '.');
         setTimeout(function () { sendDataBor(socket); }, 0);
     }
@@ -504,20 +447,37 @@ var processJoinBor = function (socket, connection) {
             (function (client) { setTimeout(notifyBoardUser(client, socket), 0); })(client);
         }
     }
-    if (boardConnData[socket.id].currentUploads.length > 0) {
-        console.log('BOARD: Found incomplete uploads. Attempting to resume.');
-        for (var i = 0; i < boardConnData[socket.id].currentUploads.length; i++) {
-            var fileId = boardConnData[socket.id].currentUploads[i];
-            var place = boardConnData[socket.id].files[fileId].downloaded / 65536;
-            var percent = (boardConnData[socket.id].files[fileId].downloaded / boardConnData[socket.id].files[fileId].fileSize) * 100;
-            var dataMsg = { serverId: fileId, place: place, percent: percent };
-            console.log('BOARD: Requesting file piece: ' + (place + 1) + ' out of ' + (Math.floor(boardConnData[socket.id].files[fileId].fileSize / 65536) + 1));
-            socket.emit('FILE-DATA', dataMsg);
-        }
+    for (var i = 0; i < modes.length; i++) {
+        var component = components[modes[i]];
+        component.userJoin(socket, boardConnData[socket.id]);
     }
-    connection.query('USE Tutoring');
-    connection.query('SELECT Tutor_ID FROM Tutor_Session WHERE Room_ID = ? AND Tutor_ID = ?', [boardConnData[socket.id].roomId, boardConnData[socket.id].userId], function (err, rows, fields) {
-        chkHost(err, rows, fields, socket, connection);
+    my_sql_pool.getConnection(function (err, connection) {
+        connection.query('USE Online_Comms', function (err) {
+            if (err) {
+                console.error("BOARD: Unable to log user connection. " + err);
+                connection.release();
+            }
+            else {
+                connection.query('INSERT INTO Connection_Logs(User_ID, Room_ID, Type, Source) VALUES (?, ?, ?, ?)', [boardConnData[socket.id].userId, boardConnData[socket.id].roomId, 'CONNECT', 'BOARD'], function (err) {
+                    if (err) {
+                        console.error("BOARD: Unable to log user connection. " + err);
+                    }
+                    connection.release();
+                });
+            }
+        });
+    });
+    connection.query('USE Tutoring', function (err) {
+        if (err) {
+            console.log('BOARD: Error while setting database schema. ' + err);
+            connection.release();
+        }
+        else {
+            connection.query('SELECT Tutor_ID FROM Tutor_Session WHERE Room_ID = ? AND Tutor_ID = ?', [boardConnData[socket.id].roomId,
+                boardConnData[socket.id].userId], function (err, rows, fields) {
+                chkHost(err, rows, fields, socket, connection);
+            });
+        }
     });
     socket.join(boardConnData[socket.id].roomId.toString());
 };
@@ -595,416 +555,263 @@ var findRoomBor = function (err, rows, fields, socket, connection, roomToken) {
         socket.disconnect();
     }
 };
-var missedText = function (textId, editId, socket) {
-    for (var i = 0; i < boardConnData[socket.id].numNodes[textId]; i++) {
-        if (!boardConnData[socket.id].recievedNodes[textId][i]) {
-            boardConnData[socket.id].nodeRetries[textId]++;
-            if (boardConnData[socket.id].nodeRetries[textId] > 10 || boardConnData[socket.id].cleanUp) {
-                clearInterval(boardConnData[socket.id].textTimeouts[textId]);
-                boardConnData[socket.id].recievedNodes[textId] = [];
-                if (boardConnData[socket.id].isConnected) {
-                    socket.emit('DROPPED-TEXT', { id: editId });
-                }
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('DELETE FROM Text_Style_Node WHERE Entry_ID = ?', [textId], function (err, result) {
-                            if (!err) {
-                                connection.query('DELETE FROM Text_Space WHERE Entry_ID = ?', [textId], function (err, result) {
-                                    if (err) {
-                                        console.log('BOARD: Error while removing badly formed text. ' + err);
-                                    }
-                                    connection.release();
-                                });
-                            }
-                            else {
-                                console.log('BOARD: Error while removing badly formed text. ' + err);
-                                connection.release();
-                            }
-                        });
-                    }
-                    else {
-                        connection.release();
-                        console.log('BOARD: Error while getting database connection to remove malformed text. ' + err);
-                    }
-                });
-                return;
-            }
-            else {
-                if (boardConnData[socket.id].isConnected) {
-                    var msg = { serverId: textId, editId: editId };
-                    socket.emit('MISSED-TEXT', msg);
-                }
-            }
-        }
-    }
-};
-var missedPoints = function (curveId, socket) {
-    for (var i = 0; i < boardConnData[socket.id].numPoints[curveId]; i++) {
-        if (!boardConnData[socket.id].recievedPoints[curveId][i]) {
-            boardConnData[socket.id].pointRetries[curveId]++;
-            if (boardConnData[socket.id].pointRetries[curveId] > 10 || boardConnData[socket.id].cleanUp) {
-                clearInterval(boardConnData[socket.id].curveTimeouts[curveId]);
-                boardConnData[socket.id].recievedPoints[curveId] = [];
-                if (boardConnData[socket.id].isConnected) {
-                    socket.emit('DROPPED-CURVE', curveId);
-                }
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('DELETE FROM Control_Points WHERE Entry_ID = ?', [curveId], function (err, result) {
-                            if (!err) {
-                                connection.query('DELETE FROM Whiteboard_Space WHERE Entry_ID = ?', [curveId], function (err, result) {
-                                    if (err) {
-                                        console.log('BOARD: Error while removing badly formed curve. ' + err);
-                                    }
-                                    connection.release();
-                                });
-                            }
-                            else {
-                                console.log('BOARD: Error while removing badly formed curve. ' + err);
-                                connection.release();
-                            }
-                        });
-                    }
-                    else {
-                        connection.release();
-                        console.log('BOARD: Error while getting database connection to remove malformed curve. ' + err);
-                    }
-                });
-                return;
-            }
-            else {
-                if (boardConnData[socket.id].isConnected) {
-                    var msg = { serverId: curveId, num: i };
-                    socket.emit('MISSED-CURVE', msg);
-                }
-            }
-        }
-    }
-};
-var sendMissingCurve = function (data, socket) {
-    my_sql_pool.getConnection(function (err, connection) {
-        if (!err) {
-            console.log('BOARD: Looking for Curve ID: ' + data.serverId + ' sequence number: ' + data.seq_num);
-            connection.query('USE Online_Comms');
-            connection.query('SELECT Entry_ID FROM Whiteboard_Space WHERE Entry_ID = ? ', [data.serverId], function (err, rows, fields) {
-                if (err) {
-                    console.log('BOARD: Error while performing control point query.' + err);
-                }
-                else {
-                    if (rows[0]) {
-                        connection.query('SELECT X_Loc, Y_Loc FROM Control_Points WHERE Entry_ID = ? AND Seq_Num = ?', [data.serverId, data.seq_num], function (err, rows, fields) {
-                            if (err) {
-                                console.log('BOARD: Error while performing control point query.' + err);
-                            }
-                            else {
-                                if (rows[0]) {
-                                    var retData = { serverId: data.serverId, num: data.seq_num, x: rows[0].X_Loc, y: rows[0].Y_Loc };
-                                    socket.emit('POINT', retData);
-                                }
-                            }
-                        });
-                    }
-                    else {
-                        socket.emit('IGNORE-CURVE', data.serverId);
-                    }
-                }
-                connection.release();
-            });
-        }
-        else {
-            connection.release();
-            console.log('BOARD: Error while getting database connection to send missing data. ' + err);
-        }
-    });
-};
-var sendMissingText = function (data, socket) {
-    my_sql_pool.getConnection(function (err, connection) {
-        if (!err) {
-            console.log('BOARD: Looking for Text ID: ' + data.serverId + ' sequence number: ' + data.seq_num);
-            connection.query('USE Online_Comms');
-            connection.query('SELECT Entry_ID FROM Text_Space WHERE Entry_ID = ? ', [data.serverId], function (err, rows, fields) {
-                if (err) {
-                    console.log('BOARD: Error while performing text node query.' + err);
-                }
-                else {
-                    if (rows[0]) {
-                        connection.query('SELECT * FROM Text_Style_Node WHERE Entry_ID = ? AND Seq_Num = ?', [data.serverId, data.seq_num], function (err, rows, fields) {
-                            if (err) {
-                                console.log('BOARD: Error while performing text node query.' + err);
-                            }
-                            else {
-                                if (rows[0]) {
-                                    sendStyle(rows[0], data.serverId, socket);
-                                }
-                            }
-                        });
-                    }
-                    else {
-                        socket.emit('IGNORE-TEXT', data.serverId);
-                    }
-                }
-                connection.release();
-            });
-        }
-        else {
-            connection.release();
-            console.log('BOARD: Error while getting database connection to send missing data. ' + err);
-        }
-    });
-};
-var addNode = function (textNode, textId, editId, socket) {
-    my_sql_pool.getConnection(function (err, connection) {
-        if (!err) {
-            connection.query('USE Online_Comms');
-            connection.query('INSERT INTO Text_Style_Node(Entry_ID, Seq_Num, Text_Data, Colour, Weight, Decoration, Style, Start, End) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)', [textId, textNode.num, textNode.text, textNode.colour, textNode.weight, textNode.decoration, textNode.style, textNode.start, textNode.end], function (err, rows, fields) {
-                if (err) {
-                    console.log('BOARD: Error while performing new style node query. ' + err);
-                }
-                else {
-                    var msg = {
-                        editId: editId, userId: boardConnData[socket.id].userId, weight: textNode.weight, decoration: textNode.decoration, num: textNode.num,
-                        style: textNode.style, colour: textNode.colour, start: textNode.start, end: textNode.end, text: textNode.text, serverId: textId
-                    };
-                    socket.to(boardConnData[socket.id].roomId.toString()).emit('STYLENODE', msg);
-                }
-                connection.release();
-            });
-        }
-        else {
-            console.log('BOARD: Error while getting database connection to add new style node. ' + err);
-            connection.release();
-        }
-    });
-};
-var comleteEdit = function (editId, socket) {
-    var i;
-    var textId = boardConnData[socket.id].editIds[editId].textId;
-    clearTimeout(boardConnData[socket.id].textTimeouts[editId]);
-    my_sql_pool.getConnection(function (err, connection) {
-        if (!err) {
-            connection.query('USE Online_Comms');
-            connection.query('DELETE FROM Text_Style_Node WHERE Entry_ID = ?', [textId], function (err, rows, fields) {
-                if (err) {
-                    console.log('BOARD: Error while performing remove old nodes query. ' + err);
-                    connection.release();
-                }
-                else {
-                    for (i = 0; i < boardConnData[socket.id].recievedNodes[editId].length; i++) {
-                        (function (nodeData, textId, editId) { setTimeout(addNode(nodeData, textId, editId, socket), 0); })(boardConnData[socket.id].recievedNodes[editId][i], textId, editId);
-                    }
-                    connection.query('UPDATE Text_Space SET Num_Style_Nodes = ? WHERE Entry_ID = ?', [boardConnData[socket.id].recievedNodes[editId].length, textId], function (err, rows, fields) {
-                        if (err) {
-                            console.log('BOARD: Error updating the number of style nodes. ' + err);
-                        }
-                        connection.release();
-                    });
-                }
-            });
-        }
-        else {
-            console.log('BOARD: Error while getting database connection to remove old nodes. ' + err);
-            connection.release();
-        }
-    });
-};
-var cleanUpload = function (socketID, fileId) {
-    my_sql_pool.getConnection(function (err, connection) {
-        if (!err) {
-            connection.query('USE Online_Comms');
-            connection.query('UPDATE Upload_Space SET isDeleted = 1 WHERE Entry_ID = ?', [fileId], function (err, rows, fields) {
-                if (err) {
-                    console.log('BOARD: Error cleaning connection. ERROR: ' + err);
-                }
-                connection.release();
-            });
-        }
-        else {
-            console.log('BOARD: Error getting connection to clean connection. ERROR: ' + err);
-        }
-    });
-    boardConnData[socketID].files[fileId] = null;
-    bor_io.to(boardConnData[socketID].roomId.toString()).emit('ABANDON-FILE', fileId);
-};
 var cleanConnection = function (socketID) {
     console.log('BOARD: Cleaning Connection....');
     boardConnData[socketID].cleanUp = true;
-    if (boardConnData[socketID].isConnected) {
-        my_sql_pool.getConnection(function (err, connection) {
-            if (!err) {
-                connection.query('USE Online_Comms');
-                connection.query('UPDATE Text_Space SET Edit_Lock = 0 WHERE Edit_Lock = ?', [boardConnData[socketID].userId], function (err, rows, fields) {
-                    if (err) {
-                        console.log('BOARD: Error cleaning connection. ERROR: ' + err);
-                    }
-                    connection.release();
-                });
-            }
-            else {
-                console.log('BOARD: Error getting connection to clean connection. ERROR: ' + err);
-            }
-        });
+    for (var i = 0; i < modes.length; i++) {
+        var component = components[modes[i]];
+        component.handleClean(boardConnData[socketID], my_sql_pool);
     }
 };
 var endConnection = function (socketID) {
     console.log('BOARD: Ending Connection....');
+    cleanConnection(socketID);
     boardConnData[socketID].isConnected = false;
-    if (boardConnData[socketID].currentUploads.length > 0) {
-        for (var i = boardConnData[socketID].currentUploads.length - 1; i >= 0; i--) {
-            var fileId = boardConnData[socketID].currentUploads[i];
-            boardConnData[socketID].currentUploads.pop();
-            cleanUpload(socketID, fileId);
-        }
-        boardConnData[socketID].files = null;
-    }
 };
-var checkUpload = function (data, connection, socket) {
-    connection.query('USE Online_Comms');
-    connection.query('SELECT Image FROM File_Types WHERE Type = ?', [data.fileType], function (err, rows) {
-        if (!err) {
-            if (rows[0]) {
-                startUpload(data, connection, socket);
+var handleDeleteMessages = function (serverIds, socket, connection, boardConnData) {
+    console.log('Received Delete Curves Event.');
+    var commitFunc = function (serverIds, connection, socket, boardConnData) {
+        connection.commit(function (err) {
+            if (!err) {
+                var payload = [];
+                for (var i = 0; i < serverIds.length; i++) {
+                    payload.push(serverIds[i]);
+                }
+                var msg = { header: ElementMessageTypes.DELETE, payload: payload };
+                var msgCont = {
+                    serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
+                };
+                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
+                connection.release();
             }
             else {
-                socket.emit('FILE-BADTYPE', data.localId);
+                return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
             }
-        }
-        else {
-            console.log('BOARD: Error while performing file type query.' + err);
-        }
-    });
-};
-var startUpload = function (data, connection, socket) {
-    var fUUID = uuid.v4();
-    connection.query('SELECT UUID FROM Upload_Space WHERE UUID = ?', [fUUID], function (err, rows) {
-        if (!rows || !rows[0]) {
-            connection.query('INSERT INTO Upload_Space(Room_ID, User_ID, Edit_Time, Pos_X, Pos_Y, Width, Height, UUID, Source, Rotation) VALUES(?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, 0)', [boardConnData[socket.id].roomId, boardConnData[socket.id].userId, data.x, data.y, data.width, data.height, fUUID, 'User'], function (err, result) {
-                if (err) {
-                    console.log('BOARD: Error while performing new file upload query.' + err);
+        });
+    };
+    var updateFunc = function (serverIds, connection, socket, boardConnData, commitCallback, index) {
+        if (index === void 0) { index = 0; }
+        if (index < serverIds.length) {
+            connection.query('UPDATE Whiteboard_Space SET isDeleted = 1 WHERE Entry_ID = ?', [serverIds[index]], function (err, rows) {
+                if (!err) {
+                    updateFunc(serverIds, connection, socket, boardConnData, commitCallback, ++index);
                 }
                 else {
-                    var fName = fUUID + '.' + data.fileName.split('.').pop();
-                    ;
-                    var fileId = result.insertId;
-                    boardConnData[socket.id].files[fileId] =
-                        {
-                            fileDesc: '',
-                            fileName: fName,
-                            fileSize: data.fileSize,
-                            data: new ArrayBuffer(0),
-                            downloaded: 0,
-                            type: data.fileType
-                        };
-                    boardConnData[socket.id].currentUploads.push(fileId);
-                    var place = 0;
-                    var idMsg = { serverId: fileId, localId: data.localId };
-                    socket.emit('FILEID', idMsg);
-                    var dataMsg = { serverId: result.insertId, place: place, percent: 0 };
-                    socket.emit('FILE-DATA', dataMsg);
-                    var uploadMsg = {
-                        serverId: result.insertId, userId: boardConnData[socket.id].userId, x: data.x, y: data.y, width: data.width,
-                        height: data.height, fileDesc: data.fileName, fileType: data.fileType, extension: data.extension, rotation: 0, editTime: new Date()
-                    };
-                    socket.broadcast.to(boardConnData[socket.id].roomId.toString()).emit('FILE-START', uploadMsg);
+                    return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
                 }
             });
         }
         else {
-            startUpload(data, connection, socket);
+            commitCallback(serverIds, connection, socket, boardConnData);
         }
-    });
-};
-var startRemDownload = function (data, connection, socket, tempId, fType) {
-    var fUUID = uuid.v4();
-    connection.query('USE Online_Comms');
-    connection.query('SELECT UUID FROM Upload_Space WHERE UUID = ?', [fUUID], function (err, rows) {
-        if (!err) {
-            if (!rows[0]) {
-                connection.query('INSERT INTO Upload_Space(Room_ID, User_ID, Edit_Time, Pos_X, Pos_Y, Width, Height, UUID, Source, Rotation) VALUES(?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, 0)', [boardConnData[socket.id].roomId, boardConnData[socket.id].userId, data.x, data.y, data.width, data.height, fUUID, data.fileURL], function (err, result) {
-                    if (err) {
-                        console.log('BOARD: Error while performing new remote file query.' + err);
-                    }
-                    else {
-                        var fName = fUUID + '.' + data.fileURL.split('?')[0].split('.').pop();
-                        var fileId = result.insertId;
-                        boardConnData[socket.id].tmpFileIds[tempId] = { serverId: fileId, uuid: fName };
-                        var idMsg = { serverId: fileId, localId: data.localId };
-                        socket.emit('FILEID', idMsg);
-                        var uploadMsg = {
-                            serverId: result.insertId, userId: boardConnData[socket.id].userId, x: data.x, y: data.y, width: data.width, rotation: 0,
-                            height: data.height, fileDesc: data.fileDesc, fileType: fType, extension: data.fileURL.split('?')[0].split('.').pop(),
-                            editTime: new Date()
-                        };
-                        socket.broadcast.to(boardConnData[socket.id].roomId.toString()).emit('FILE-START', uploadMsg);
-                    }
-                });
+    };
+    if (boardConnData.isHost || boardConnData.allowAllEdit) {
+        connection.beginTransaction(function (err) {
+            if (!err) {
+                updateFunc(serverIds, connection, socket, boardConnData, commitFunc);
             }
             else {
-                return startRemDownload(data, connection, socket, tempId, fType);
-            }
-        }
-        else {
-            console.log('BOARD: Error while performing new remote file query.' + err);
-        }
-    });
-};
-var completeRemFile = function (fileId, socket, upArray, fileType, origin, waitCount) {
-    if (waitCount === void 0) { waitCount = 0; }
-    if (!boardConnData[socket.id].tmpFileIds[fileId]) {
-        if (waitCount > 10) {
-            console.log('BOARD: Failed to complete upload, file data not set.');
-        }
-        else {
-            setTimeout(completeRemFile, 100, fileId, socket, upArray, fileType, origin, ++waitCount);
-        }
-    }
-    else {
-        var buffer = new Buffer(upArray.byteLength);
-        for (var i = 0; i < buffer.length; ++i) {
-            buffer[i] = upArray[i];
-        }
-        var params = {
-            Body: buffer, Metadata: { Origin: origin }, ContentType: fileType,
-            Bucket: 'whiteboard-storage', Key: boardConnData[socket.id].tmpFileIds[fileId].uuid, ACL: 'public-read'
-        };
-        var upload = new AWS.S3.ManagedUpload({ params: params, service: s3 });
-        upload.send(function (err, upData) {
-            if (err) {
-                console.log('BOARD: Error sending file: ' + err);
-            }
-            else {
-                var fileURL_1 = 'https://whiteboard-storage.s3.amazonaws.com/' + boardConnData[socket.id].tmpFileIds[fileId].uuid;
-                console.log('BOARD: Received All File Data.');
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('UPDATE Upload_Space SET isComplete = 1, Content_URL = ?, File_Type = ? WHERE Entry_ID = ?', [fileURL_1, fileType, boardConnData[socket.id].tmpFileIds[fileId].serverId], function (err, rows) {
-                            if (!err) {
-                                var doneMsg = { serverId: boardConnData[socket.id].tmpFileIds[fileId].serverId, fileURL: fileURL_1 };
-                                socket.to(boardConnData[socket.id].roomId.toString()).emit('FILE-DONE', doneMsg);
-                                socket.emit('FILE-DONE', doneMsg);
-                            }
-                            else {
-                                console.log('BOARD: Error while performing complete upload query. ' + err);
-                            }
-                            connection.release();
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection for complete upload query. ' + err);
-                    }
-                });
+                return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
             }
         });
     }
+    else if (boardConnData.allowUserEdit) {
+        var selectFunc_1 = function (serverIds, updateList, connection, socket, boardConnData, index, resolvedList) {
+            if (index === void 0) { index = 0; }
+            if (resolvedList === void 0) { resolvedList = []; }
+            if (index < serverIds.length) {
+                connection.query('SELECT Entry_ID FROM Whiteboard_Space WHERE Entry_ID = ? AND User_ID = ?', [serverIds[index]], function (err, rows) {
+                    if (!err) {
+                        if (rows[0]) {
+                            resolvedList.push(serverIds[index]);
+                        }
+                        selectFunc_1(serverIds, updateList, connection, socket, boardConnData, ++index, resolvedList);
+                    }
+                    else {
+                        console.log('BOARD: Error while performing delete:findUser query. ' + err);
+                        connection.release();
+                        return;
+                    }
+                });
+            }
+            else {
+                connection.beginTransaction(function (err) {
+                    if (!err) {
+                        updateFunc(resolvedList, connection, socket, boardConnData, commitFunc);
+                    }
+                    else {
+                        return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
+                    }
+                });
+            }
+        };
+    }
+};
+var handleRestoreMessages = function (serverIds, socket, connection, boardConnData) {
+    console.log('Received Restore Curves Event.');
+    var commitFunc = function (serverIds, connection, socket, boardConnData) {
+        connection.commit(function (err) {
+            if (!err) {
+                var payload = [];
+                for (var i = 0; i < serverIds.length; i++) {
+                    payload.push(serverIds[i]);
+                }
+                var msg = { header: ElementMessageTypes.RESTORE, payload: payload };
+                var msgCont = {
+                    serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
+                };
+                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
+                connection.release();
+            }
+            else {
+                return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
+            }
+        });
+    };
+    var updateFunc = function (serverIds, connection, socket, boardConnData, commitCallback, index) {
+        if (index === void 0) { index = 0; }
+        if (index < serverIds.length) {
+            connection.query('UPDATE Whiteboard_Space SET isDeleted = 0 WHERE Entry_ID = ?', [serverIds[index]], function (err, rows) {
+                if (!err) {
+                    updateFunc(serverIds, connection, socket, boardConnData, commitCallback, ++index);
+                }
+                else {
+                    return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
+                }
+            });
+        }
+        else {
+            commitCallback(serverIds, connection, socket, boardConnData);
+        }
+    };
+    if (boardConnData.isHost || boardConnData.allowAllEdit) {
+        connection.beginTransaction(function (err) {
+            if (!err) {
+                updateFunc(serverIds, connection, socket, boardConnData, commitFunc);
+            }
+            else {
+                return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
+            }
+        });
+    }
+    else if (boardConnData.allowUserEdit) {
+        var selectFunc_2 = function (serverIds, updateList, connection, socket, boardConnData, index, resolvedList) {
+            if (index === void 0) { index = 0; }
+            if (resolvedList === void 0) { resolvedList = []; }
+            if (index < serverIds.length) {
+                connection.query('SELECT Entry_ID FROM Whiteboard_Space WHERE Entry_ID = ? AND User_ID = ?', [serverIds[index]], function (err, rows) {
+                    if (!err) {
+                        if (rows[0]) {
+                            resolvedList.push(serverIds[index]);
+                        }
+                        selectFunc_2(serverIds, updateList, connection, socket, boardConnData, ++index, resolvedList);
+                    }
+                    else {
+                        console.log('BOARD: Error while performing restore:findUser query. ' + err);
+                        connection.release();
+                        return;
+                    }
+                });
+            }
+            else {
+                connection.beginTransaction(function (err) {
+                    if (!err) {
+                        updateFunc(resolvedList, connection, socket, boardConnData, commitFunc);
+                    }
+                    else {
+                        return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
+                    }
+                });
+            }
+        };
+    }
+};
+var handleMoveMessages = function (messages, socket, connection, boardConnData) {
+    var self = _this;
+    console.log('Received Move Curves Event.');
+    var updateList = [];
+    for (var i = 0; i < messages.length; i++) {
+        var item = [messages[i].x, messages[i].y, messages[i].id];
+        updateList.push(item);
+    }
+    if (boardConnData.isHost || boardConnData.allowAllEdit) {
+        handleMoves(updateList, connection, socket, boardConnData);
+    }
+    else if (boardConnData.allowUserEdit) {
+        var selectFunc_3 = function (messages, updateList, connection, socket, boardConnData, index, resolvedList) {
+            if (index === void 0) { index = 0; }
+            if (resolvedList === void 0) { resolvedList = []; }
+            if (index < messages.length) {
+                connection.query('SELECT Entry_ID FROM Whiteboard_Space WHERE Entry_ID = ? AND User_ID = ?', [messages[index].id], function (err, rows) {
+                    if (!err) {
+                        if (rows[0]) {
+                            resolvedList.push(updateList[index]);
+                        }
+                        selectFunc_3(messages, updateList, connection, socket, boardConnData, ++index, resolvedList);
+                    }
+                    else {
+                        console.log('BOARD: Error while performing move:findUser query. ' + err);
+                        connection.release();
+                        return;
+                    }
+                });
+            }
+            else {
+                handleMoves(resolvedList, connection, socket, boardConnData);
+            }
+        };
+    }
+};
+var handleMoves = function (updates, connection, socket, boardConnData) {
+    var commitFunc = function (updates, connection, socket, boardConnData) {
+        connection.commit(function (err) {
+            if (!err) {
+                var payload = [];
+                for (var i = 0; i < updates.length; i++) {
+                    payload.push({ id: updates[i][2], x: updates[i][0], y: updates[i][1], editTime: new Date() });
+                }
+                var msg = { header: ElementMessageTypes.MOVE, payload: payload };
+                var msgCont = {
+                    serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
+                };
+                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
+                connection.release();
+            }
+            else {
+                return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
+            }
+        });
+    };
+    var updateFunc = function (updates, connection, socket, boardConnData, commitCallback, index) {
+        if (index === void 0) { index = 0; }
+        if (index < updates.length) {
+            connection.query('UPDATE Whiteboard_Space SET X_Loc = ?, Y_Loc = ?, Edit_Time = CURRENT_TIMESTAMP WHERE Entry_ID = ?', updates[index], function (err, rows) {
+                if (!err) {
+                    updateFunc(updates, connection, socket, boardConnData, commitCallback, ++index);
+                }
+                else {
+                    return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
+                }
+            });
+        }
+        else {
+            commitCallback(updates, connection, socket, boardConnData);
+        }
+    };
+    connection.beginTransaction(function (err) {
+        if (!err) {
+            updateFunc(updates, connection, socket, boardConnData, commitFunc);
+        }
+        else {
+            return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
+        }
+    });
 };
 bor_io.on('connection', function (socket) {
     if (!boardConnData[socket.id]) {
         boardConnData[socket.id] = {
-            editCount: 1, isHost: false, isConnected: false, isJoining: false, curveTimeouts: [], textTimeouts: [], recievedPoints: [], pointRetries: [],
-            numRecieved: [], numPoints: [], numNodes: [], recievedNodes: [], nodeRetries: [], editIds: [], cleanUp: false, sessId: 0, roomId: 0, userId: 0,
-            joinTimeout: null, startTime: null, sessLength: 0, username: '', files: [], currentUploads: [], colour: 0, tmpFileIds: [], tmpCount: 0
+            isHost: false, isConnected: false, isJoining: false, allowUserEdit: true, cleanUp: false, sessId: 0, roomId: 0, userId: 0,
+            joinTimeout: null, startTime: null, sessLength: 0, username: '', colour: 0, allowAllEdit: false
         };
     }
     console.log('BOARD: User Connecting.....');
@@ -1022,12 +829,34 @@ bor_io.on('connection', function (socket) {
     socket.on('disconnect', function () {
         try {
             clearTimeout(boardConnData[socket.id].joinTimeout);
-            console.log('Setting connection clean callback.');
-            cleanConnection(socket.id);
-            boardConnData[socket.id].disconnectTimeout = setTimeout(endConnection, 5000, socket.id);
+            my_sql_pool.getConnection(function (err, connection) {
+                connection.query('USE Online_Comms', function (err) {
+                    if (err) {
+                        console.error("BOARD: Unable to log user disconnect. " + err);
+                        connection.release();
+                    }
+                    else {
+                        connection.query('INSERT INTO Connection_Logs(User_ID, Room_ID, Type, Source) VALUES (?, ?, ?, ?)', [boardConnData[socket.id].userId, boardConnData[socket.id].roomId, 'DISCONNECT', 'BOARD'], function (err) {
+                            if (err) {
+                                console.error("BOARD: Unable to log user disconnect. " + err);
+                            }
+                            connection.release();
+                        });
+                    }
+                });
+            });
+            if (boardConnData[socket.id].isConnected) {
+                console.log('Setting connection clean callback.');
+                boardConnData[socket.id].disconnectTimeout = setTimeout(endConnection, 5000, socket.id);
+                for (var i = 0; i < modes.length; i++) {
+                    var component = components[modes[i]];
+                    component.handleDisconnect(boardConnData[socket.id], my_sql_pool);
+                }
+            }
             console.log('BOARD: User disconnected.');
         }
         catch (e) {
+            console.error('BOARD: Error disconnecting: ' + e);
         }
         finally {
         }
@@ -1035,18 +864,34 @@ bor_io.on('connection', function (socket) {
     socket.on('JOIN-ROOM', function (roomToken) {
         try {
             console.log('BOARD: User ' + boardConnData[socket.id].userId + ' joining room ' + roomToken + '.......');
-            if (!boardConnData[socket.id].isJoining) {
-                boardConnData[socket.id].isJoining = true;
-                my_sql_pool.getConnection(function (err, connection) {
-                    connection.query('USE Online_Comms');
-                    connection.query('SELECT Room_ID FROM Tutorial_Room_Table WHERE Access_Token = ?', [roomToken], function (err, rows, fields) {
-                        findRoomBor(err, rows, fields, socket, connection, roomToken);
+            if (boardConnData[socket.id].isConnected) {
+                clearTimeout(boardConnData[socket.id].disconnectTimeout);
+                for (var i = 0; i < modes.length; i++) {
+                    var component = components[modes[i]];
+                    component.handleReconnect(boardConnData[socket.id], socket, my_sql_pool);
+                }
+            }
+            else {
+                if (!boardConnData[socket.id].isJoining) {
+                    boardConnData[socket.id].isJoining = true;
+                    my_sql_pool.getConnection(function (err, connection) {
+                        connection.query('USE Online_Comms', function (err) {
+                            if (err) {
+                                console.log('BOARD: Error while setting database schema. ' + err);
+                                connection.release();
+                            }
+                            else {
+                                connection.query('SELECT Room_ID FROM Tutorial_Room_Table WHERE Access_Token = ?', [roomToken], function (err, rows, fields) {
+                                    findRoomBor(err, rows, fields, socket, connection, roomToken);
+                                });
+                            }
+                        });
                     });
-                });
+                }
             }
         }
         catch (e) {
-            socket.emit('ERROR');
+            socket.emit('ERROR', 'Failed to join session due to server error.');
             socket.disconnect();
             console.log('BOARD: Error while attempting join-room, Details: ' + e);
         }
@@ -1056,6 +901,8 @@ bor_io.on('connection', function (socket) {
     socket.on('LEAVE', function () {
         if (boardConnData[socket.id].isConnected) {
             try {
+                console.log('Received leave.');
+                endConnection(socket.id);
                 socket.leave(boardConnData[socket.id].roomId.toString());
             }
             catch (e) {
@@ -1064,1148 +911,175 @@ bor_io.on('connection', function (socket) {
             }
         }
     });
-    socket.on('CURVE', function (data) {
-        if (boardConnData[socket.id].isConnected) {
-            console.log('BOARD: Received curve.');
+    socket.on('NEW-ELEMENT', function (data) {
+        if (typeof (data.payload.localId) != 'undefined' && boardConnData[socket.id].allowUserEdit) {
             my_sql_pool.getConnection(function (err, connection) {
                 if (!err) {
-                    if (typeof (data.localId) != 'undefined' && data.num_points && data.colour) {
-                        connection.query('USE Online_Comms');
-                        connection.query('INSERT INTO Whiteboard_Space(Room_ID, User_ID, Local_ID, Edit_Time, Num_Control_Points, Colour, Size, X_Loc, Y_Loc, Width, Height) VALUES(?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?)', [boardConnData[socket.id].roomId, boardConnData[socket.id].userId, data.localId, data.num_points, data.colour, data.size, data.x, data.y, data.width, data.height], function (err, result) {
-                            if (err) {
-                                console.log('BOARD: Error while performing new curve query.' + err);
-                            }
-                            else {
-                                boardConnData[socket.id].numRecieved[result.insertId] = 0;
-                                boardConnData[socket.id].numPoints[result.insertId] = data.num_points;
-                                boardConnData[socket.id].recievedPoints[result.insertId] = [];
-                                boardConnData[socket.id].pointRetries[result.insertId] = 0;
-                                console.log('BOARD: Sending curve ID: ' + result.insertId);
-                                var idMsg = { serverId: result.insertId, localId: data.localId };
-                                socket.emit('CURVEID', idMsg);
-                                var curveMsg = {
-                                    serverId: result.insertId, userId: boardConnData[socket.id].userId, x: data.x, y: data.y, width: data.width,
-                                    height: data.height, size: data.size, colour: data.colour, num_points: data.num_points, editTime: new Date()
-                                };
-                                socket.broadcast.to(boardConnData[socket.id].roomId.toString()).emit('CURVE', curveMsg);
-                                boardConnData[socket.id].curveTimeouts[result.insertId] = setInterval(function () { missedPoints(result.insertId, socket); }, 5000);
-                            }
-                        });
-                    }
-                }
-                else {
-                    console.log('BOARD: Error while getting database connection to add new curve. ' + err);
-                }
-                connection.release();
-            });
-        }
-    });
-    socket.on('POINT', function (data) {
-        if (boardConnData[socket.id].isConnected) {
-            my_sql_pool.getConnection(function (err, connection) {
-                if (!err) {
-                    if (!boardConnData[socket.id].recievedPoints[data.serverId][data.num]) {
-                        connection.query('USE Online_Comms');
-                        connection.query('INSERT INTO Control_Points(Entry_ID, Seq_Num, X_Loc, Y_Loc) VALUES(?, ?, ?, ?)', [data.serverId, data.num, data.x, data.y], function (err, rows, fields) {
-                            if (err) {
-                                console.log('ID: ' + data.serverId);
-                                console.log('Seq_Num: ' + data.num);
-                                console.log('BOARD: Error while performing new control point query. ' + err);
-                            }
-                            else {
-                                var msg = { serverId: data.serverId, num: data.num, x: data.x, y: data.y };
-                                socket.to(boardConnData[socket.id].roomId.toString()).emit('POINT', msg);
-                                boardConnData[socket.id].recievedPoints[data.serverId][data.num] = true;
-                                boardConnData[socket.id].numRecieved[data.serverId]++;
-                                if (boardConnData[socket.id].numRecieved[data.serverId] == boardConnData[socket.id].numPoints[data.serverId]) {
-                                    clearInterval(boardConnData[socket.id].curveTimeouts[data.serverId]);
-                                    socket.emit('CURVE-COMPLETE', data.serverId);
-                                }
-                            }
-                            connection.release();
-                        });
-                    }
-                }
-                else {
-                    console.log('BOARD: Error while getting database connection to add new control point. ' + err);
-                    connection.release();
-                }
-            });
-        }
-    });
-    socket.on('DELETE-CURVE', function (curveId) {
-        if (boardConnData[socket.id].isConnected) {
-            console.log('Received Delete Curve Event.');
-            if (boardConnData[socket.id].isHost) {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('UPDATE Whiteboard_Space SET isDeleted = 1 WHERE Entry_ID = ?', [curveId], function (err, rows) {
-                            if (!err) {
-                                socket.to(boardConnData[socket.id].roomId.toString()).emit('DELETE-CURVE', curveId);
-                            }
-                            else {
-                                console.log('BOARD: Error while performing erase curve query. ' + err);
-                            }
-                            connection.release();
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to delete curve. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-            else {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('SELECT User_ID FROM Whiteboard_Space WHERE Entry_ID = ? AND User_ID = ?', [curveId, boardConnData[socket.id].userId], function (err, rows) {
-                            if (!err) {
-                                if (rows[0]) {
-                                    connection.query('UPDATE Whiteboard_Space SET isDeleted = 1 WHERE Entry_ID = ?', [curveId], function (err, rows) {
-                                        if (!err) {
-                                            socket.to(boardConnData[socket.id].roomId.toString()).emit('DELETE-CURVE', curveId);
-                                        }
-                                        else {
-                                            console.log('BOARD: Error while performing erase curve query. ' + err);
-                                        }
-                                        connection.release();
-                                    });
-                                }
-                            }
-                            else {
-                                console.log('BOARD: Error while performing erase:findUser query. ' + err);
-                                connection.release();
-                            }
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to delete curve. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-        }
-    });
-    socket.on('MOVE-CURVE', function (data) {
-        if (boardConnData[socket.id].isConnected) {
-            console.log('Received Move Curve Event.');
-            if (boardConnData[socket.id].isHost) {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('SELECT X_Loc, Y_Loc FROM Whiteboard_Space WHERE Entry_ID = ?', [data.serverId], function (err, rows) {
-                            if (!err && rows[0]) {
-                                var X_change_1 = data.x - rows[0].X_Loc;
-                                var Y_change_1 = data.y - rows[0].Y_Loc;
-                                connection.query('START TRANSACTION', function (err) {
-                                    if (!err) {
-                                        connection.query('UPDATE Whiteboard_Space SET X_Loc = ?, Y_Loc = ?, Edit_Time = CURRENT_TIMESTAMP WHERE Entry_ID = ?', [data.x, data.y, data.serverId], function (err, rows) {
-                                            if (!err) {
-                                                connection.query('UPDATE Control_Points SET X_Loc = (X_Loc + ?), Y_Loc = (Y_Loc + ?) WHERE Entry_ID = ?', [X_change_1, Y_change_1, data.serverId], function (err, rows) {
-                                                    if (!err) {
-                                                        connection.query('COMMIT', function (err) {
-                                                            if (!err) {
-                                                                var msg = {
-                                                                    serverId: data.serverId, x: data.x, y: data.y, editTime: new Date()
-                                                                };
-                                                                socket.to(boardConnData[socket.id].roomId.toString()).emit('MOVE-CURVE', msg);
-                                                            }
-                                                            else {
-                                                                console.log('BOARD: Error while performing move curve query. ' + err);
-                                                            }
-                                                        });
-                                                    }
-                                                    else {
-                                                        console.log('BOARD: Error while performing move curve query. ' + err);
-                                                    }
-                                                    connection.release();
-                                                });
-                                            }
-                                            else {
-                                                console.log('BOARD: Error while performing move curve query. ' + err);
-                                            }
-                                        });
-                                    }
-                                    else {
-                                        console.log('BOARD: Error while performing move curve query. ' + err);
-                                    }
-                                });
-                            }
-                            else {
-                                console.log('BOARD: Error while performing move curve query. ' + err);
-                            }
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to move curve. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-            else {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('SELECT User_ID FROM Whiteboard_Space WHERE Entry_ID = ? AND User_ID = ?', [data.serverId, boardConnData[socket.id].userId], function (err, rows) {
-                            if (!err) {
-                                if (rows[0]) {
-                                    connection.query('UPDATE Control_Points SET X_Loc = (X_Loc + ?), Y_Loc = (Y_Loc + ?), Edit_Time = CURRENT_TIMESTAMP WHERE Entry_ID = ?', [data.x, data.y, data.serverId], function (err, rows) {
-                                        if (!err) {
-                                            var msg = { serverId: data.serverId, x: data.x, y: data.y, editTime: new Date() };
-                                            socket.to(boardConnData[socket.id].roomId.toString()).emit('MOVE-CURVE', msg);
-                                        }
-                                        else {
-                                            console.log('BOARD: Error while performing move curve query. ' + err);
-                                        }
-                                        connection.release();
-                                    });
-                                }
-                            }
-                            else {
-                                console.log('BOARD: Error while performing move:findUser query. ' + err);
-                                connection.release();
-                            }
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to move curve. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-        }
-    });
-    socket.on('MISSING-CURVE', function (data) {
-        console.log('BOARD: Received missing message.');
-        if (boardConnData[socket.id].isConnected) {
-            setTimeout(function () { sendMissingCurve(data, socket); }, 0);
-        }
-    });
-    socket.on('UNKNOWN-CURVE', function (curveId) {
-        if (boardConnData[socket.id].isConnected) {
-            my_sql_pool.getConnection(function (err, connection) {
-                if (!err) {
-                    connection.query('USE Online_Comms');
-                    connection.query('SELECT * FROM Whiteboard_Space WHERE Entry_ID = ? AND Room_ID = ?', [curveId, boardConnData[socket.id].roomId], function (err, rows, fields) {
+                    connection.query('USE Online_Comms', function (err) {
                         if (err) {
-                            console.log('BOARD: Error while performing curve query.' + err);
-                        }
-                        else {
-                            if (rows[0]) {
-                                var retData = {
-                                    serverId: curveId, userId: rows[0].User_ID, num_points: rows[0].Num_Control_Points,
-                                    colour: rows[0].Colour, size: rows[0].Size, x: rows[0].X_Loc, y: rows[0].Y_Loc,
-                                    width: rows[0].Width, height: rows[0].Height, editTime: rows[0].Edit_Time
-                                };
-                                socket.emit('CURVE', retData);
-                            }
-                        }
-                        connection.release();
-                    });
-                }
-                else {
-                    connection.release();
-                    console.log('BOARD: Error while getting database connection to send missing curve ID. ' + err);
-                }
-            });
-        }
-    });
-    socket.on('TEXTBOX', function (data) {
-        if (boardConnData[socket.id].isConnected) {
-            my_sql_pool.getConnection(function (err, connection) {
-                if (!err) {
-                    if (typeof (data.localId) != 'undefined') {
-                        connection.query('USE Online_Comms');
-                        connection.query('INSERT INTO Text_Space(Room_ID, User_ID, Local_ID, Edit_Time, Num_Style_Nodes, Size, Pos_X, Pos_Y, Width, Height, Edit_Lock, Justified) VALUES(?, ?, ?, CURRENT_TIMESTAMP, 0, ?, ?, ?, ?, ?, ?, ?)', [boardConnData[socket.id].roomId, boardConnData[socket.id].userId, data.localId, data.size, data.x, data.y, data.width, data.height, boardConnData[socket.id].userId, data.justified], function (err, result) {
-                            if (err) {
-                                console.log('BOARD: Error while performing new textbox query.' + err);
-                            }
-                            else {
-                                var idMsg = { serverId: result.insertId, localId: data.localId };
-                                socket.emit('TEXTID', idMsg);
-                                var textMsg = {
-                                    serverId: result.insertId, userId: boardConnData[socket.id].userId, editLock: boardConnData[socket.id].userId,
-                                    x: data.x, y: data.y, width: data.width, height: data.height, size: data.size, justified: data.justified, editCount: 0,
-                                    editTime: new Date()
-                                };
-                                socket.broadcast.to(boardConnData[socket.id].roomId.toString()).emit('TEXTBOX', textMsg);
-                            }
-                        });
-                    }
-                    else {
-                        console.log('Uh Oh, some malformed data appeared.');
-                    }
-                }
-                else {
-                    console.log('BOARD: Error while getting database connection to add new textbox. ' + err);
-                }
-                connection.release();
-            });
-        }
-    });
-    socket.on('EDIT-TEXT', function (data) {
-        if (boardConnData[socket.id].isConnected) {
-            boardConnData[socket.id].editIds[boardConnData[socket.id].editCount] = { textId: data.serverId, localId: data.localId };
-            boardConnData[socket.id].recievedNodes[boardConnData[socket.id].editCount] = [];
-            boardConnData[socket.id].numNodes[boardConnData[socket.id].editCount] = data.num_nodes;
-            boardConnData[socket.id].nodeRetries[boardConnData[socket.id].editCount] = 0;
-            var idMsg = { editId: boardConnData[socket.id].editCount, bufferId: data.bufferId, localId: data.localId };
-            socket.emit('EDITID-TEXT', idMsg);
-            var editMsg = {
-                serverId: data.serverId, userId: boardConnData[socket.id].userId, editId: boardConnData[socket.id].editCount, num_nodes: data.num_nodes,
-                editTime: new Date()
-            };
-            socket.to(boardConnData[socket.id].roomId.toString()).emit('EDIT-TEXT', editMsg);
-            boardConnData[socket.id].textTimeouts[boardConnData[socket.id].editCount] = (function (textId, editId) {
-                setTimeout(function () { missedText(textId, editId, socket); }, 60000);
-            })(data.serverId, boardConnData[socket.id].editCount);
-            boardConnData[socket.id].editCount++;
-        }
-    });
-    socket.on('STYLENODE', function (data) {
-        if (boardConnData[socket.id].isConnected) {
-            if (!boardConnData[socket.id].recievedNodes[data.editId]) {
-                console.error('Bad data. Socket ID: ' + socket.id + ' EditID: ' + data.editId);
-            }
-            var newNode = {
-                start: data.start, end: data.end, text: data.text, num: data.num, weight: data.weight, decoration: data.decoration, style: data.style,
-                colour: data.colour
-            };
-            boardConnData[socket.id].recievedNodes[data.editId].push(newNode);
-            if (boardConnData[socket.id].recievedNodes[data.editId].length == boardConnData[socket.id].numNodes[data.editId]) {
-                comleteEdit(data.editId, socket);
-            }
-        }
-    });
-    socket.on('JUSTIFY-TEXT', function (data) {
-        if (boardConnData[socket.id].isConnected) {
-            my_sql_pool.getConnection(function (err, connection) {
-                if (!err) {
-                    connection.query('USE Online_Comms');
-                    connection.query('SELECT Edit_Lock FROM Text_Space WHERE Entry_ID = ?', [data.serverId], function (err, rows, fields) {
-                        if (err) {
-                            console.log('BOARD: Error getting textbox justify state. ' + err);
+                            console.log('BOARD: Error while setting database schema. ' + err);
                             connection.release();
                         }
                         else {
-                            if (rows[0].Edit_Lock == boardConnData[socket.id].userId) {
-                                connection.query('UPDATE Text_Space SET Justified = ? WHERE Entry_ID = ?', [data.newState, data.serverId], function (err, rows, fields) {
-                                    if (err) {
-                                        console.log('BOARD: Error while updating textbox justify state. ' + err);
-                                    }
-                                    else {
-                                        var msg = { serverId: data.serverId, newState: data.newState };
-                                        socket.to(boardConnData[socket.id].roomId.toString()).emit('JUSTIFY-TEXT', msg);
-                                    }
-                                    connection.release();
-                                });
-                            }
-                        }
-                    });
-                }
-                else {
-                    console.log('BOARD: Error while getting database connection to change textbox justify state. ' + err);
-                    connection.release();
-                }
-            });
-        }
-    });
-    socket.on('LOCK-TEXT', function (data) {
-        if (boardConnData[socket.id].isConnected) {
-            if (boardConnData[socket.id].isHost) {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('SELECT Edit_Lock FROM Text_Space WHERE Entry_ID = ?', [data.serverId], function (err, rows, fields) {
-                            if (err) {
-                                console.log('BOARD: Error getting textbox lock state. ' + err);
-                                connection.release();
-                            }
-                            else {
-                                if (!rows[0].Edit_Lock) {
-                                    connection.query('UPDATE Text_Space SET Edit_Lock = ? WHERE Entry_ID = ?', [boardConnData[socket.id].userId, data.serverId], function (err, rows, fields) {
-                                        if (err) {
-                                            console.log('BOARD: Error while updating textbox loxk state. ' + err);
-                                        }
-                                        else {
-                                            var idMsg = { serverId: data.serverId };
-                                            socket.emit('LOCKID-TEXT', idMsg);
-                                            var lockMsg = { serverId: data.serverId, userId: boardConnData[socket.id].userId };
-                                            socket.to(boardConnData[socket.id].roomId.toString()).emit('LOCK-TEXT', lockMsg);
-                                        }
-                                        connection.release();
-                                    });
-                                }
-                                else {
-                                    var refMsg = { serverId: data.serverId };
-                                    socket.emit('REFUSED-TEXT', refMsg);
-                                    connection.release();
-                                }
-                            }
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to edit style node. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-            else {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('SELECT User_ID FROM Text_Space WHERE Entry_ID = ? AND User_ID = ?', [data.serverId, boardConnData[socket.id].userId], function (err, rows) {
-                            if (!err) {
-                                if (rows[0]) {
-                                    connection.query('SELECT Edit_Lock FROM Text_Space WHERE Entry_ID = ?', [data.serverId], function (err, rows, fields) {
-                                        if (err) {
-                                            console.log('BOARD: Error getting textbox lock state. ' + err);
-                                            connection.release();
-                                        }
-                                        else {
-                                            if (!rows[0].Edit_Lock) {
-                                                connection.query('UPDATE Text_Space SET Edit_Lock = ? WHERE Entry_ID = ?', [boardConnData[socket.id].userId, data.serverId], function (err, rows, fields) {
-                                                    if (err) {
-                                                        console.log('BOARD: Error while updating textbox loxk state. ' + err);
-                                                    }
-                                                    else {
-                                                        var idMsg = { serverId: data.serverId };
-                                                        socket.emit('LOCKID-TEXT', idMsg);
-                                                        var lockMsg = { serverId: data.serverId, userId: boardConnData[socket.id].userId };
-                                                        socket.to(boardConnData[socket.id].roomId.toString()).emit('LOCK-TEXT', lockMsg);
-                                                    }
-                                                    connection.release();
-                                                });
-                                            }
-                                            else {
-                                                var refMsg = { serverId: data.serverId };
-                                                socket.emit('REFUSED-TEXT', refMsg);
-                                                connection.release();
-                                            }
-                                        }
-                                    });
-                                }
-                            }
-                            else {
-                                console.log('BOARD: Error while performing textLock:findUser query. ' + err);
-                                connection.release();
-                            }
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to lock text. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-        }
-    });
-    socket.on('RELEASE-TEXT', function (data) {
-        console.log('Received release for: ' + data.serverId);
-        if (boardConnData[socket.id].isConnected) {
-            my_sql_pool.getConnection(function (err, connection) {
-                if (!err) {
-                    connection.query('USE Online_Comms');
-                    connection.query('SELECT Edit_Lock FROM Text_Space WHERE Entry_ID = ?', [data.serverId], function (err, rows, fields) {
-                        if (err) {
-                            console.log('BOARD: Error releasing textbox lock state. ' + err);
-                            connection.release();
-                        }
-                        else {
-                            if (!rows[0]) {
-                                console.log('No row. Data ID: ' + data.serverId);
-                                connection.release();
-                            }
-                            else if (rows[0].Edit_Lock == boardConnData[socket.id].userId) {
-                                connection.query('UPDATE Text_Space SET Edit_Lock = 0 WHERE Entry_ID = ?', [data.serverId], function (err, rows, fields) {
-                                    if (err) {
-                                        console.log('BOARD: Error while updating textbox lock state. ' + err);
-                                    }
-                                    else {
-                                        var msg = { serverId: data.serverId };
-                                        socket.to(boardConnData[socket.id].roomId.toString()).emit('RELEASE-TEXT', msg);
-                                    }
-                                    connection.release();
-                                });
-                            }
-                            else {
-                                connection.release();
-                            }
-                        }
-                    });
-                }
-                else {
-                    console.log('BOARD: Error while getting database connection to release text lock. ' + err);
-                    connection.release();
-                }
-            });
-        }
-    });
-    socket.on('MOVE-TEXT', function (data) {
-        if (boardConnData[socket.id].isConnected) {
-            console.log('Received Move Text Event.');
-            if (boardConnData[socket.id].isHost) {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('UPDATE Text_Space SET Pos_X = ?, Pos_Y = ?, Edit_Time = CURRENT_TIMESTAMP WHERE Entry_ID = ?', [data.x, data.y, data.serverId], function (err, rows) {
-                            if (!err) {
-                                var msg = { serverId: data.serverId, x: data.x, y: data.y, editTime: new Date() };
-                                socket.to(boardConnData[socket.id].roomId.toString()).emit('MOVE-TEXT', msg);
-                            }
-                            else {
-                                console.log('BOARD: Error while performing move text query. ' + err);
-                            }
-                            connection.release();
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to move text. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-            else {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('SELECT User_ID FROM Text_Space WHERE Entry_ID = ? AND User_ID = ?', [data.serverId, boardConnData[socket.id].userId], function (err, rows) {
-                            if (!err) {
-                                if (rows[0]) {
-                                    connection.query('UPDATE Text_Space SET Pos_X = ?, Pos_Y = ?, Edit_Time = CURRENT_TIMESTAMP WHERE Entry_ID = ?', [data.x, data.y, data.serverId], function (err, rows) {
-                                        if (!err) {
-                                            var msg = { serverId: data.serverId, x: data.x, y: data.y, editTime: new Date() };
-                                            socket.to(boardConnData[socket.id].roomId.toString()).emit('MOVE-TEXT', msg);
-                                        }
-                                        else {
-                                            console.log('BOARD: Error while performing move text query. ' + err);
-                                        }
-                                        connection.release();
-                                    });
-                                }
-                            }
-                            else {
-                                console.log('BOARD: Error while performing move text:findUser query. ' + err);
-                                connection.release();
-                            }
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to move text. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-        }
-    });
-    socket.on('RESIZE-TEXT', function (data) {
-        if (boardConnData[socket.id].isConnected) {
-            console.log('Received Resize Text Event.');
-            if (boardConnData[socket.id].isHost) {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('UPDATE Text_Space SET Width = ?, Height = ?, Edit_Time = CURRENT_TIMESTAMP WHERE Entry_ID = ?', [data.width, data.height, data.serverId], function (err, rows) {
-                            if (!err) {
-                                var msg = { serverId: data.serverId, width: data.width, height: data.height, editTime: new Date() };
-                                socket.to(boardConnData[socket.id].roomId.toString()).emit('RESIZE-TEXT', msg);
-                            }
-                            else {
-                                console.log('BOARD: Error while performing resize text query. ' + err);
-                            }
-                            connection.release();
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to resize text. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-            else {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('SELECT User_ID FROM Text_Space WHERE Entry_ID = ? AND User_ID', [data.serverId, boardConnData[socket.id].userId], function (err, rows) {
-                            if (!err) {
-                                if (rows[0]) {
-                                    connection.query('UPDATE Text_Space SET Width = ?, Height = ?, Edit_Time = CURRENT_TIMESTAMP WHERE Entry_ID = ?', [data.width, data.height, data.serverId], function (err, rows) {
-                                        if (!err) {
-                                            var msg = { serverId: data.serverId, width: data.width, height: data.height, editTime: new Date() };
-                                            socket.to(boardConnData[socket.id].roomId.toString()).emit('RESIZE-TEXT', msg);
-                                        }
-                                        else {
-                                            console.log('BOARD: Error while performing resize text query. ' + err);
-                                        }
-                                        connection.release();
-                                    });
-                                }
-                            }
-                            else {
-                                console.log('BOARD: Error while performing resize text:findUser query. ' + err);
-                                connection.release();
-                            }
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to resize text. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-        }
-    });
-    socket.on('DELETE-TEXT', function (textId) {
-        if (boardConnData[socket.id].isConnected) {
-            console.log('Received Delete Text Event. Text ID: ' + textId);
-            if (boardConnData[socket.id].isHost) {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('UPDATE Text_Space SET isDeleted = 1 WHERE Entry_ID = ?', [textId], function (err, rows) {
-                            if (!err) {
-                                socket.to(boardConnData[socket.id].roomId.toString()).emit('DELETE-TEXT', textId);
-                            }
-                            else {
-                                console.log('BOARD: Error while performing erase text query. ' + err);
-                            }
-                            connection.release();
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to delete text. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-            else {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('SELECT User_ID FROM Text_Space WHERE Entry_ID = ? AND User_ID', [textId, boardConnData[socket.id].userId], function (err, rows) {
-                            console.log('Cleared User.');
-                            if (!err) {
-                                if (rows[0]) {
-                                    connection.query('UPDATE Text_Space SET isDeleted = 1 WHERE Entry_ID = ?', [textId], function (err, rows) {
-                                        if (!err) {
-                                            socket.to(boardConnData[socket.id].roomId.toString()).emit('DELETE-TEXT', textId);
-                                        }
-                                        else {
-                                            console.log('BOARD: Error while performing erase text query. ' + err);
-                                        }
-                                        connection.release();
-                                    });
-                                }
-                            }
-                            else {
-                                console.log('BOARD: Error while performing erase text:findUser query. ' + err);
-                                connection.release();
-                            }
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to delete text. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-        }
-    });
-    socket.on('MISSING-TEXT', function (data) {
-        console.log('BOARD: Received missing message.');
-        if (boardConnData[socket.id].isConnected) {
-            setTimeout(function () { sendMissingText(data, socket); }, 0);
-        }
-    });
-    socket.on('UNKNOWN-TEXT', function (textId) {
-        if (boardConnData[socket.id].isConnected) {
-            my_sql_pool.getConnection(function (err, connection) {
-                if (!err) {
-                    connection.query('USE Online_Comms');
-                    connection.query('SELECT * FROM Text_Space WHERE Entry_ID = ?', [textId], function (err, rows, fields) {
-                        if (err) {
-                            connection.release();
-                            console.log('BOARD: Error while performing existing text query. ' + err);
-                        }
-                        else {
-                            if (rows[0]) {
-                                var msg = {
-                                    serverId: rows[0].Entry_ID, userId: rows[0].User_ID, size: rows[0].Size,
-                                    x: rows[0].Pos_X, y: rows[0].Pos_Y, width: rows[0].Width, height: rows[0].Height,
-                                    editLock: rows[0].Edit_Lock, justified: rows[0].isJustified, editCount: 0, editTime: rows[0].Edit_Time
-                                };
-                                socket.emit('TEXTBOX', msg);
-                                (function (data) { setTimeout(function () { sendText(data, socket); }, 100); })(rows[0]);
-                            }
-                            connection.release();
-                        }
-                    });
-                }
-                else {
-                    console.log('BOARD: Error while getting database connection for unknown text. ' + err);
-                    connection.release();
-                }
-            });
-        }
-    });
-    socket.on('UNKNOWN-EDIT', function (editId) {
-        if (boardConnData[socket.id].isConnected) {
-            my_sql_pool.getConnection(function (err, connection) {
-                if (!err) {
-                    connection.query('USE Online_Comms');
-                    connection.query('SELECT * FROM Text_Space WHERE Entry_ID = ?', [editId], function (err, rows, fields) {
-                        if (err) {
-                            connection.release();
-                            console.log('BOARD: Error while performing existing text query. ' + err);
-                        }
-                        else {
-                            if (rows[0]) {
-                                (function (data) { setTimeout(function () { sendText(data, socket); }, 100); })(rows[0]);
-                            }
-                            connection.release();
-                        }
-                    });
-                }
-                else {
-                    console.log('BOARD: Error while getting database connection for unknown edit. ' + err);
-                    connection.release();
-                }
-            });
-        }
-    });
-    socket.on('HIGHLIGHT', function (data) {
-        console.log('BOARD: Recieved Highlight.');
-        console.log('BOARD: Sending colour as: ' + boardConnData[socket.id].colour);
-        var highMsg = { userId: boardConnData[socket.id].userId, x: data.x, y: data.y, width: data.width, height: data.height, colour: boardConnData[socket.id].colour };
-        socket.to(boardConnData[socket.id].roomId.toString()).emit('HIGHLIGHT', highMsg);
-    });
-    socket.on('CLEAR-HIGHTLIGHT', function () {
-    });
-    socket.on('FILE-START', function (data) {
-        console.log('BOARD: Received file start.');
-        if (boardConnData[socket.id].isConnected) {
-            if (data.fileSize > 10485760) {
-                console.log('BOARD: User attempted upload larger than 10MB.');
-            }
-            else {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        checkUpload(data, connection, socket);
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to upload new file. ' + err);
-                    }
-                    connection.release();
-                });
-            }
-        }
-    });
-    socket.on('FILE-DATA', function (data) {
-        console.log('BOARD: Received file data.');
-        console.log('BOARD: Piece Size: ' + data.piece.length);
-        console.log('BOARD: Previous total: ' + boardConnData[socket.id].files[data.serverId].downloaded);
-        boardConnData[socket.id].files[data.serverId].downloaded += data.piece.length;
-        var tmpArray = new Uint8Array(boardConnData[socket.id].files[data.serverId].downloaded);
-        tmpArray.set(new Uint8Array(boardConnData[socket.id].files[data.serverId].data), 0);
-        tmpArray.set(new Uint8Array(data.piece), boardConnData[socket.id].files[data.serverId].data.byteLength);
-        boardConnData[socket.id].files[data.serverId].data = tmpArray.buffer;
-        if (boardConnData[socket.id].files[data.serverId].downloaded == boardConnData[socket.id].files[data.serverId].fileSize) {
-            console.log('BOARD: File Upload complete.');
-            var index = boardConnData[socket.id].currentUploads.indexOf(data.serverId);
-            boardConnData[socket.id].currentUploads.splice(index, 1);
-            var upArray = new Uint8Array(boardConnData[socket.id].files[data.serverId].data);
-            var buffer = new Buffer(upArray.byteLength);
-            for (var i = 0; i < buffer.length; ++i) {
-                buffer[i] = upArray[i];
-            }
-            var params = {
-                Body: buffer, ContentType: boardConnData[socket.id].files[data.serverId].type, Metadata: { Origin: 'USER: ' + boardConnData[socket.id].userId },
-                Bucket: 'whiteboard-storage', Key: boardConnData[socket.id].files[data.serverId].fileName, ACL: 'public-read'
-            };
-            var upload = new AWS.S3.ManagedUpload({ params: params, service: s3 });
-            upload.send(function (err, upData) {
-                if (err) {
-                    console.log('BOARD: Error uploading file to bucker: ' + err);
-                }
-                else {
-                    var fileURL_2 = 'https://whiteboard-storage.s3.amazonaws.com/' + boardConnData[socket.id].files[data.serverId].fileName;
-                    var fType_1 = boardConnData[socket.id].files[data.serverId].type;
-                    boardConnData[socket.id].files[upData.fileId] = null;
-                    console.log('Received All File Data.');
-                    my_sql_pool.getConnection(function (err, connection) {
-                        if (!err) {
-                            connection.query('USE Online_Comms');
-                            connection.query('UPDATE Upload_Space SET isComplete = 1, Content_URL = ?, File_Type = ? WHERE Entry_ID = ?', [fileURL_2, fType_1, data.serverId], function (err, rows) {
+                            connection.beginTransaction(function (err) {
                                 if (!err) {
-                                    var doneMsg = { serverId: data.serverId, fileURL: fileURL_2 };
-                                    socket.to(boardConnData[socket.id].roomId.toString()).emit('FILE-DONE', doneMsg);
-                                    socket.emit('FILE-DONE', doneMsg);
+                                    var message_1 = data.payload;
+                                    connection.query('INSERT INTO ' +
+                                        'Whiteboard_Space(Type, Room_ID, User_ID, Local_ID, X_Loc, Y_Loc, Width, Height) ' +
+                                        'VALUES(?, ?, ?, ?, ?, ?, ?, ?)', [
+                                        data.type, boardConnData[socket.id].roomId, boardConnData[socket.id].userId,
+                                        message_1.localId, message_1.x, message_1.y, message_1.width, message_1.height
+                                    ], function (err, result) {
+                                        if (err) {
+                                            console.log('BOARD: Error while performing new curve query.' + err);
+                                            return connection.rollback(function () { console.error(err); connection.release(); });
+                                        }
+                                        else {
+                                            components[data.type].handleNew(message_1, result.insertId, socket, connection, boardConnData[socket.id], my_sql_pool);
+                                        }
+                                    });
                                 }
                                 else {
-                                    console.log('BOARD: Error while performing complete upload query. ' + err);
+                                    console.log('BOARD: Error while performing new curve query.' + err);
+                                    return connection.rollback(function () { console.error(err); connection.release(); });
                                 }
-                                connection.release();
                             });
                         }
-                        else {
-                            console.log('BOARD: Error while getting database connection for complete upload query. ' + err);
+                    });
+                }
+                else {
+                    console.log('BOARD: Error getting database connection.');
+                }
+            });
+        }
+    });
+    socket.on('MSG-COMPONENT', function (data) {
+        my_sql_pool.getConnection(function (err, connection) {
+            if (!err) {
+                connection.query('USE Online_Comms', function (err) {
+                    if (err) {
+                        console.log('BOARD: Error while setting database schema. ' + err);
+                        connection.release();
+                    }
+                    else {
+                        if (data.type == 'ANY') {
+                            var message = data.payload;
+                            switch (message.header) {
+                                case ElementMessageTypes.DELETE:
+                                    var delServerIds = message.payload;
+                                    if (delServerIds.length > 0) {
+                                        handleDeleteMessages(delServerIds, socket, connection, boardConnData[socket.id]);
+                                    }
+                                    break;
+                                case ElementMessageTypes.RESTORE:
+                                    var resServerIds = message.payload;
+                                    if (resServerIds.length > 0) {
+                                        handleRestoreMessages(resServerIds, socket, connection, boardConnData[socket.id]);
+                                    }
+                                    break;
+                                case ElementMessageTypes.MOVE:
+                                    var moveMessages = message.payload;
+                                    handleMoveMessages(moveMessages, socket, connection, boardConnData[socket.id]);
+                                    break;
+                                default:
+                                    break;
+                            }
                         }
-                    });
-                }
-            });
-        }
-        else if (boardConnData[socket.id].files[data.serverId].data.byteLength > 10485760) {
-            console.log('BOARD: User uploaded a file larger than 10MB, it should have been less than.');
-            socket.broadcast.to(boardConnData[socket.id].roomId.toString()).emit('ABANDON-FILE', data.serverId);
-        }
-        else {
-            var place = boardConnData[socket.id].files[data.serverId].downloaded / 65536;
-            var percent = (boardConnData[socket.id].files[data.serverId].downloaded / boardConnData[socket.id].files[data.serverId].fileSize) * 100;
-            var dataMsg = { serverId: data.serverId, place: place, percent: percent };
-            console.log('BOARD: Requesting file piece: ' + (place + 1) + ' out of ' + (Math.floor(boardConnData[socket.id].files[data.serverId].fileSize / 65536) + 1));
-            socket.emit('FILE-DATA', dataMsg);
-        }
-    });
-    socket.on('STOP-FILE', function (serverId) {
-    });
-    socket.on('REMOTE-FILE', function (data) {
-        console.log('BOARD: Received remote file.');
-        if (boardConnData[socket.id].isConnected) {
-            var tmpId_1 = boardConnData[socket.id].tmpCount++;
-            var urlObj = urlMod.parse(data.fileURL);
-            var userReq_1 = urlObj;
-            my_sql_pool.getConnection(function (err, connection) {
-                if (!err) {
-                    var options = { method: 'HEAD', host: userReq_1.host, port: 443, path: userReq_1.path };
-                    var req = require('https').request(options, function (res) {
-                        startRemDownload(data, connection, socket, tmpId_1, res.headers['content-type']);
-                    });
-                    req.end();
-                }
-                else {
-                    console.log('BOARD: Error while getting database connection to download remote file. ' + err);
-                }
-                connection.release();
-            });
-            require('https').get(userReq_1, function (response) {
-                if (response.statusCode == 301 || response.statusCode == 302) {
-                }
-                else if (response.headers['content-length'] > 10485760) {
-                    console.log('Image too large.');
-                }
-                else if (!~[200, 304].indexOf(response.statusCode)) {
-                    console.log('Received an invalid status code. Code is: ' + response.statusCode);
-                }
-                else if (!response.headers['content-type'].match(/image/)) {
-                    console.log('Not an image.');
-                }
-                else {
-                    console.log('BOARD: Getting Data');
-                    var body = new Uint8Array(0);
-                    response.on('error', function (err) {
-                        console.log(err);
-                    });
-                    response.on('data', function (chunk) {
-                        var tmpArray = new Uint8Array(body.byteLength + chunk.length);
-                        tmpArray.set(new Uint8Array(body), 0);
-                        tmpArray.set(new Uint8Array(chunk), body.byteLength);
-                        body = tmpArray;
-                    });
-                    response.on('end', function () {
-                        completeRemFile(tmpId_1, socket, body, response.headers['content-type'], data.fileURL);
-                    });
-                }
-            });
-        }
-    });
-    socket.on('MOVE-FILE', function (data) {
-        if (boardConnData[socket.id].isConnected) {
-            console.log('Received Move File Event.');
-            if (boardConnData[socket.id].isHost) {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('UPDATE Upload_Space SET Pos_X = ?, Pos_Y = ?, Edit_Time = CURRENT_TIMESTAMP WHERE Entry_ID = ?', [data.x, data.y, data.serverId], function (err, rows) {
-                            if (!err) {
-                                var msg = { serverId: data.serverId, x: data.x, y: data.y, editTime: new Date() };
-                                socket.to(boardConnData[socket.id].roomId.toString()).emit('MOVE-FILE', msg);
-                            }
-                            else {
-                                console.log('BOARD: Error while performing move file query. ' + err);
-                            }
-                            connection.release();
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to move file. ' + err);
-                        connection.release();
+                        else {
+                            components[data.type].handleMessage(data.payload, data.id, socket, connection, boardConnData[socket.id], my_sql_pool);
+                        }
                     }
                 });
             }
             else {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('SELECT User_ID FROM Upload_Space WHERE Entry_ID = ? AND User_ID = ?', [data.serverId, boardConnData[socket.id].userId], function (err, rows) {
-                            if (!err) {
-                                if (rows[0]) {
-                                    connection.query('USE Online_Comms');
-                                    connection.query('UPDATE Upload_Space SET Pos_X = ?, Pos_Y = ?, Edit_Time = CURRENT_TIMESTAMP WHERE Entry_ID = ?', [data.x, data.y, data.serverId], function (err, rows) {
-                                        if (!err) {
-                                            var msg = { serverId: data.serverId, x: data.x, y: data.y, editTime: new Date() };
-                                            socket.to(boardConnData[socket.id].roomId.toString()).emit('MOVE-FILE', msg);
-                                        }
-                                        else {
-                                            console.log('BOARD: Error while performing move file query. ' + err);
-                                        }
-                                        connection.release();
-                                    });
-                                }
-                            }
-                            else {
-                                console.log('BOARD: Error while performing move file:findUser query. ' + err);
-                                connection.release();
-                            }
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to move file. ' + err);
-                        connection.release();
-                    }
-                });
+                console.log('BOARD: Error getting database connection.');
             }
-        }
+        });
     });
-    socket.on('RESIZE-FILE', function (data) {
-        if (boardConnData[socket.id].isConnected) {
-            console.log('Received Resize File Event.');
-            if (boardConnData[socket.id].isHost) {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('UPDATE Upload_Space SET Width = ?, Height = ?, Edit_Time = CURRENT_TIMESTAMP WHERE Entry_ID = ?', [data.width, data.height, data.serverId], function (err, rows) {
-                            if (!err) {
-                                var msg = { serverId: data.serverId, width: data.width, height: data.height, editTime: new Date() };
-                                socket.to(boardConnData[socket.id].roomId.toString()).emit('RESIZE-FILE', msg);
-                            }
-                            else {
-                                console.log('BOARD: Error while performing resize file query. ' + err);
-                            }
-                            connection.release();
-                        });
+    socket.on('UNKNOWN-ELEMENT', function (data) {
+        my_sql_pool.getConnection(function (err, connection) {
+            if (!err) {
+                connection.query('USE Online_Comms', function (err) {
+                    if (err) {
+                        console.log('BOARD: Error while setting database schema. ' + err);
+                        connection.release();
                     }
                     else {
-                        console.log('BOARD: Error while getting database connection to resize file. ' + err);
-                        connection.release();
+                        components[data.type].handleUnknownMessage(data.id, socket, connection, boardConnData[socket.id]);
                     }
                 });
             }
             else {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('SELECT User_ID FROM Upload_Space WHERE Entry_ID = ? AND User_ID', [data.serverId, boardConnData[socket.id].userId], function (err, rows) {
-                            if (!err) {
-                                if (rows[0]) {
-                                    connection.query('UPDATE Upload_Space SET Width = ?, Height = ?, Edit_Time = CURRENT_TIMESTAMP WHERE Entry_ID = ?', [data.width, data.height, data.serverId], function (err, rows) {
-                                        if (!err) {
-                                            var msg = { serverId: data.serverId, width: data.width, height: data.height, editTime: new Date() };
-                                            socket.to(boardConnData[socket.id].roomId.toString()).emit('RESIZE-FILE', msg);
-                                        }
-                                        else {
-                                            console.log('BOARD: Error while performing resize file query. ' + err);
-                                        }
-                                        connection.release();
-                                    });
-                                }
-                            }
-                            else {
-                                console.log('BOARD: Error while performing resize file:findUser query. ' + err);
-                                connection.release();
-                            }
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to resize file. ' + err);
-                        connection.release();
-                    }
-                });
+                console.log('BOARD: Error getting database connection.');
             }
-        }
-    });
-    socket.on('ROTATE-FILE', function (data) {
-        if (boardConnData[socket.id].isConnected) {
-            console.log('Received Rotate File Event.');
-            if (boardConnData[socket.id].isHost) {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('UPDATE Upload_Space SET Rotation = ? WHERE Entry_ID = ?', [data.rotation, data.serverId], function (err, rows) {
-                            if (!err) {
-                                var msg = { serverId: data.serverId, rotation: data.rotation };
-                                socket.to(boardConnData[socket.id].roomId.toString()).emit('ROTATE-FILE', msg);
-                            }
-                            else {
-                                console.log('BOARD: Error while performing rotate file query. ' + err);
-                            }
-                            connection.release();
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to rotate file. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-            else {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('SELECT User_ID FROM Upload_Space WHERE Entry_ID = ? AND User_ID', [data.serverId, boardConnData[socket.id].userId], function (err, rows) {
-                            if (!err) {
-                                if (rows[0]) {
-                                    connection.query('UPDATE Upload_Space SET Rotation = ? WHERE Entry_ID = ?', [data.rotation, data.serverId], function (err, rows) {
-                                        if (!err) {
-                                            var msg = { serverId: data.serverId, rotation: data.rotation };
-                                            socket.to(boardConnData[socket.id].roomId.toString()).emit('RESIZE-FILE', msg);
-                                        }
-                                        else {
-                                            console.log('BOARD: Error while performing resize file query. ' + err);
-                                        }
-                                        connection.release();
-                                    });
-                                }
-                            }
-                            else {
-                                console.log('BOARD: Error while performing resize file:findUser query. ' + err);
-                                connection.release();
-                            }
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to resize file. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-        }
-    });
-    socket.on('DELETE-FILE', function (fileId) {
-        if (boardConnData[socket.id].isConnected) {
-            console.log('Received Delete File Event. File ID: ' + fileId);
-            if (boardConnData[socket.id].isHost) {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('UPDATE Upload_Space SET isDeleted = 1 WHERE Entry_ID = ?', [fileId], function (err, rows) {
-                            if (!err) {
-                                socket.to(boardConnData[socket.id].roomId.toString()).emit('DELETE-FILE', fileId);
-                            }
-                            else {
-                                console.log('BOARD: Error while performing erase file query. ' + err);
-                            }
-                            connection.release();
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to delete file. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-            else {
-                my_sql_pool.getConnection(function (err, connection) {
-                    if (!err) {
-                        connection.query('USE Online_Comms');
-                        connection.query('SELECT User_ID FROM Upload_Space WHERE Entry_ID = ? AND User_ID', [fileId, boardConnData[socket.id].userId], function (err, rows) {
-                            if (!err) {
-                                if (rows[0]) {
-                                    connection.query('UPDATE Text_Space SET isDeleted = 1 WHERE Entry_ID = ?', [fileId], function (err, rows) {
-                                        if (!err) {
-                                            socket.to(boardConnData[socket.id].roomId.toString()).emit('DELETE-FILE', fileId);
-                                        }
-                                        else {
-                                            console.log('BOARD: Error while performing erase file query. ' + err);
-                                        }
-                                        connection.release();
-                                    });
-                                }
-                            }
-                            else {
-                                console.log('BOARD: Error while performing erase file:findUser query. ' + err);
-                                connection.release();
-                            }
-                        });
-                    }
-                    else {
-                        console.log('BOARD: Error while getting database connection to delete file. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-        }
+        });
     });
     console.log('Finished with listeners.');
     my_sql_pool.getConnection(function (err, connection) {
         console.log('Tried getting connection.');
         if (!err) {
-            connection.query('USE Users');
-            connection.query('SELECT Session_Data FROM User_Sessions WHERE Session_ID = ?', [boardConnData[socket.id].sessId], function (err, rows) {
-                if (!err) {
-                    if (rows[0]) {
-                        var sessBuff = new Buffer(rows[0].Session_Data);
-                        var sessData = sessBuff.toString('utf-8');
-                        sessData = sessData.slice(sessData.indexOf('userId";i:') + 10, -1);
-                        sessData = sessData.slice(0, sessData.indexOf(';'));
-                        boardConnData[socket.id].userId = parseInt(sessData);
-                        if (connBoardUsers[boardConnData[socket.id].userId]) {
-                            if (connBoardUsers[boardConnData[socket.id].userId] != socket.id) {
-                                if (bor_io.connected[connBoardUsers[boardConnData[socket.id].userId]]) {
-                                    bor_io.connected[connBoardUsers[boardConnData[socket.id].userId]].disconnect();
-                                }
-                                connBoardUsers[boardConnData[socket.id].userId] = socket.id;
-                            }
-                        }
-                        else {
-                            connBoardUsers[boardConnData[socket.id].userId] = socket.id;
-                        }
-                        connection.query('SELECT Username FROM User_Table WHERE User_ID = ?', [boardConnData[socket.id].userId], function (err, rows) {
-                            if (!err) {
-                                if (rows[0] && rows[0].Username) {
-                                    boardConnData[socket.id].username = rows[0].Username;
-                                    socket.emit('READY', boardConnData[socket.id].userId);
-                                    console.log('BOARD: User ' + boardConnData[socket.id].userId + ' passed initial connection.');
-                                    connection.release();
+            connection.query('USE Users', function (err) {
+                if (err) {
+                    console.log('BOARD: Error while setting database schema. ' + err);
+                    connection.release();
+                }
+                else {
+                    connection.query('SELECT Session_Data FROM User_Sessions WHERE Session_ID = ?', [boardConnData[socket.id].sessId], function (err, rows) {
+                        if (!err) {
+                            if (rows[0]) {
+                                var sessBuff = new Buffer(rows[0].Session_Data);
+                                var sessData = sessBuff.toString('utf-8');
+                                sessData = sessData.slice(sessData.indexOf('userId";i:') + 10, -1);
+                                sessData = sessData.slice(0, sessData.indexOf(';'));
+                                boardConnData[socket.id].userId = parseInt(sessData);
+                                if (connBoardUsers[boardConnData[socket.id].userId]) {
+                                    if (connBoardUsers[boardConnData[socket.id].userId] != socket.id) {
+                                        if (bor_io.connected[connBoardUsers[boardConnData[socket.id].userId]]) {
+                                            bor_io.connected[connBoardUsers[boardConnData[socket.id].userId]].disconnect();
+                                        }
+                                        connBoardUsers[boardConnData[socket.id].userId] = socket.id;
+                                    }
                                 }
                                 else {
-                                    connection.release();
-                                    socket.disconnect();
-                                    console.log('BOARD: User ' + connection.escape(boardConnData[socket.id].userId) + ' not found.');
-                                    return;
+                                    connBoardUsers[boardConnData[socket.id].userId] = socket.id;
                                 }
+                                connection.query('SELECT Username FROM User_Table WHERE User_ID = ?', [boardConnData[socket.id].userId], function (err, rows) {
+                                    if (!err) {
+                                        if (rows[0] && rows[0].Username) {
+                                            boardConnData[socket.id].username = rows[0].Username;
+                                            socket.emit('READY', boardConnData[socket.id].userId);
+                                            console.log('BOARD: User ' + boardConnData[socket.id].userId + ' passed initial connection.');
+                                            connection.release();
+                                        }
+                                        else {
+                                            connection.release();
+                                            socket.disconnect();
+                                            console.log('BOARD: User ' + connection.escape(boardConnData[socket.id].userId) + ' not found.');
+                                            return;
+                                        }
+                                    }
+                                    else {
+                                        connection.release();
+                                        socket.disconnect();
+                                        console.log('BOARD: Error while performing user Query. ' + err);
+                                        return;
+                                    }
+                                });
                             }
                             else {
                                 connection.release();
                                 socket.disconnect();
-                                console.log('BOARD: Error while performing user Query. ' + err);
+                                console.log('BOARD: Session not found.');
                                 return;
                             }
-                        });
-                    }
-                    else {
-                        connection.release();
-                        socket.disconnect();
-                        console.log('BOARD: Session not found.');
-                        return;
-                    }
-                }
-                else {
-                    connection.release();
-                    socket.disconnect();
-                    console.log('BOARD: Error while performing session Query. ' + err);
-                    return;
+                        }
+                        else {
+                            connection.release();
+                            socket.disconnect();
+                            console.log('BOARD: Error while performing session Query. ' + err);
+                            return;
+                        }
+                    });
                 }
             });
         }
@@ -2249,14 +1123,21 @@ var getServerData = function (chunk) {
         if (!err) {
             var qStr;
             console.log('Adding to server list.......');
-            connection.query('USE Online_Comms');
-            connection.query('SELECT * FROM Tutorial_Servers WHERE End_Point = ?', [endPointAddr], function (err, rows) {
+            connection.query('USE Online_Comms', function (err) {
                 if (err) {
-                    console.log('Error registering server in list. ' + err);
+                    console.log('BOARD: Error while setting database schema. ' + err);
                     connection.release();
                 }
                 else {
-                    checkServers(err, rows, connection);
+                    connection.query('SELECT * FROM Tutorial_Servers WHERE End_Point = ?', [endPointAddr], function (err, rows) {
+                        if (err) {
+                            console.log('Error registering server in list. ' + err);
+                            connection.release();
+                        }
+                        else {
+                            checkServers(err, rows, connection);
+                        }
+                    });
                 }
             });
         }

@@ -1,0 +1,182 @@
+{
+    "type": "FREECURVE",
+    "database":
+    {
+        "name": "Free_Curve",
+        "data":
+        [
+            {
+                "name": "Num_Control_Points", "type": "INT"
+            },
+            {
+                "name": "Size", "type": "FLOAT"
+            },
+            {
+                "name": "Colour", "type": "VARCHAR(16)"
+            },
+            {
+                "name": "Control_Points", "type": "TABLE",
+                "link": "Entry_ID",
+                "data":
+                [
+                    {
+                        "name": "Seq_Num", "type": "INT"
+                    },
+                    {
+                        "name": "X_Loc", "type": "FLOAT"
+                    },
+                    {
+                        "name": "Y_Loc", "type": "FLOAT"
+                    }
+                ]
+            }
+        ]
+    },
+    "join_message":
+    {
+
+    },
+    "messages_in":
+    [
+        {
+            "name": "NEW", "id": 0,
+            "data":
+            [
+                {
+                    "name": "localId", "type": "INT"
+                }
+            ],
+            "operations":
+            [
+                {
+                    "type": "INSERT", "insertId": "serverId", "database": "Whiteboard_Space",
+                    "database_entries":
+                    [
+                        "X_Loc"
+                    ],
+                    "values":
+                    [
+                        { "source": "message", "value": "x" },
+                        { "source": "message", "value": "y" },
+                        { "source": "message", "value": "width" },
+                        { "source": "message", "value": "height" },
+                        { "source": "session", "value": "userId" },
+                        { "source": "raw", "value": "CURRENT_TIMESTAMP" },
+                    ]
+                },
+                {
+                    "type": "INSERT", "database": "Free_Curve",
+                    "database_entries":
+                    [
+                        "ServerId",
+                        "Colour"
+                    ],
+                    "values":
+                    [
+                        { "insterId": "serverId" },
+                        { "message": "colour" }
+                    ]
+                },
+                {
+                    "type": "CACHE",
+                    "message": "POINT",
+                    "cache_id": "num",
+                    "cache_count": "num_points",
+                    "hold_data":
+                    [
+                        { "insterId": "serverId" }
+                    ],
+                    "timeout":
+                    {
+                        "time": 3000,
+                        "attempts": 5,
+                        "retry_message":
+                        {
+                            "name": "MISSED",
+                            "data":
+                            [
+                                {
+                                    "name": "seq_num", "value": "num"
+                                }
+                            ]
+                        },
+                        "failed_message":
+                        {
+                            "name": "DROPPED"
+                        },
+                        "fail_operations":
+                        {
+
+                        }
+                    },
+                    "completion":
+                    {
+                        "operations":
+                        [
+                            {
+                                "type": "DELETE"
+                            },
+                            {
+                                "type": "INSERT_CACHE"
+                            }
+                        ],
+                        "return_message": {},
+                        "pass_message": {}
+                    }
+                }
+            ],
+            "return_message":
+            {
+                "name": "SERVERID", "id": 1,
+                "data":
+                [
+
+                ]
+            },
+            "pass_message":
+            {
+                "name": "NEW", "id": 0,
+                "data":
+                [
+
+                ]
+            }
+        },
+        {
+            "name": "DELETE", "id": 1
+        },
+        {
+            "name": "RESTORE", "id": 2
+        },
+        {
+            "name": "IGNORE", "id": 3
+        },
+        {
+            "name": "COMPLETE", "id": 4
+        },
+        {
+            "name": "DROPPED", "id": 5
+        },
+        {
+            "name": "MOVE", "id": 6
+        },
+        {
+            "name": "POINT", "id": 7
+        },
+        {
+            "name": "POINTMISSED", "id": 8
+        },
+        {
+            "name": "MISSINGPOINT", "id": 9
+        }
+    ],
+    "messages_out":
+    [
+        {
+            "name": "NEW", "id": 0
+        },
+        {
+            "name": "SERVERID", "id": 1
+        }
+    ]
+}
