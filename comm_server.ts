@@ -1,50 +1,15 @@
+/*
+ *  Board socket, used for communicating whiteboard data.
+ *
+ *
+ *
+ *
+ *
+ */
+
 interface Map<T> {
     [K: string]: T;
 }
-interface ConnectionData {
-    roomId: number;
-    userId: number;
-    joinTimeout: NodeJS.Timer;
-    startTime;
-    sessLength: number;
-    username: string;
-    isConnected: boolean;
-    isHost: boolean;
-    isJoining: boolean;
-    disconnectTimeout?: NodeJS.Timer;
-}
-interface MediaConnection extends ConnectionData {
-    ScalableBroadcast: boolean;
-    extra;
-}
-interface FileData {
-    fileDesc: string;
-    fileName: string;
-    fileSize: number;
-    data: ArrayBuffer;
-    downloaded: number;
-    type: string;
-}
-interface TempFileData {
-    serverId: number;
-    uuid: string;
-}
-interface BoardConnection extends ConnectionData {
-    colour: number;
-    sessId: number;
-    cleanUp: boolean;
-    allowUserEdit: boolean;
-    allowAllEdit: boolean;
-}
-
-/**
- * Message types that can be sent between the user and server for any element type.
- */
-const ElementMessageTypes = {
-    DELETE: 0,
-    RESTORE: 1,
-    MOVE: 2,
-};
 
 let colourTable : Array<number> = [
     0xFF0000, 0x00FF00, 0x0000FF, 0xFF00FF, 0xFF7F00,
@@ -61,26 +26,27 @@ let allowedFileTypes : Array<string> = [
 
 ];
 
-const urlMod = require('url');
-var AWS = require('aws-sdk');
-var s3 = new AWS.S3();
-var app = require('express')();
-var fs = require('fs');
-var privateKey = fs.readFileSync('/var/www/web/fake-keys/privatekey.key').toString();
-var certificate = fs.readFileSync('/var/www/web/fake-keys/certificate.pem').toString();
-var credentials = {key: privateKey, cert: certificate};
-var https = require('https').Server(credentials, app);
-var io : SocketIO.Server = require('socket.io')(https);
-var PHPUnserialize = require('php-unserialize');
-var parseCookie = require('cookie-parser');
-var mysql: MySql  = require('mysql');
-var uuid = require('node-uuid');
 
-var dbHost = process.env.DATABASE_HOST;
-var dbUser = process.env.DATABASE_USER;
-var dbPass = process.env.DATABASE_PASSWORD;
+const app = require('express')();
+const fs = require('fs');
+const privateKey = fs.readFileSync('/var/www/web/fake-keys/privatekey.key').toString();
+const certificate = fs.readFileSync('/var/www/web/fake-keys/certificate.pem').toString();
+const credentials = {key: privateKey, cert: certificate};
+const https = require('https').Server(credentials, app);
+const io : SocketIO.Server = require('socket.io')(https);
+const PHPUnserialize = require('php-unserialize');
+const parseCookie = require('cookie-parser');
+const mysql: MySql.MySqlModule = require('mysql');
 
-var my_sql_pool = mysql.createPool({
+const typeCheck = require('check-types');
+
+
+
+let dbHost = process.env.DATABASE_HOST;
+let dbUser = process.env.DATABASE_USER;
+let dbPass = process.env.DATABASE_PASSWORD;
+
+let my_sql_pool = mysql.createPool({
   host     : dbHost,
   user     : dbUser,
   password : dbPass,
@@ -88,8 +54,8 @@ var my_sql_pool = mysql.createPool({
   supportBigNumbers: true
 });
 
-var med_io = io.of('/media');
-var bor_io = io.of('/board');
+let med_io = io.of('/media');
+let bor_io = io.of('/board');
 
 app.use(parseCookie('7e501ffeb426888ea59e63aa15b931a7f9d28d24'));
 
@@ -102,49 +68,52 @@ app.use(parseCookie('7e501ffeb426888ea59e63aa15b931a7f9d28d24'));
  *
  *
  **************************************************************************************************************************************************************/
-var mediaConnData : { [id: string] : MediaConnection } = {};
-var connMediaUsers : { [id: number] : string } = {};
+let mediaConnData : { [id: string] : MediaConnection } = {};
+let connMediaUsers : { [id: number] : string } = {};
 
-var notifyUser = function(client, socket, connection)
+let notifyUser = function(client, socket, connection)
 {
     my_sql_pool.getConnection(function(err, connection)
     {
-        if (!err)
-        {
-            console.log('Querying ' + client);
-            // Tell the new user about everyone else
-            connection.query('USE Online_Comms');
-            connection.query('SELECT User_Id, Username, Socket_ID FROM Room_Participants WHERE Socket_ID = ?', [client], function(err, rows)
-            {
-                if (!err)
-                {
-                    if(rows[0])
-                    {
-                        socket.emit('JOIN', rows[0].User_Id, rows[0].Username, rows[0].Socket_ID);
-                    }
-                    else
-                    {
-                        console.log('MEDIA: HERE. Error querying session participants.');
-                        return;
-                    }
-                }
-                else
-                {
-                    console.log('MEDIA: Error querying session participants.' + err);
-                    return;
-                }
-
-                connection.release();
-            });
-        }
-        else
+        if(err)
         {
             console.log('MEDIA: Error getting connection from pool: ' + err);
+            return connection.release();
         }
+
+        console.log('Querying ' + client);
+        // Tell the new user about everyone else
+        connection.query('USE Online_Comms',
+        (err) =>
+        {
+            if (err)
+            {
+                console.log('BOARD: Error while setting database schema. ' + err);
+                return connection.release();
+            }
+
+            connection.query('SELECT User_Id, Username, Socket_ID FROM Room_Participants WHERE Socket_ID = ?', [client], function(err, rows)
+            {
+                if(err)
+                {
+                    console.log('MEDIA: Error querying session participants.' + err);
+                    return connection.release();
+                }
+            
+                if(rows[0] == null || rows[0] == undefined)
+                {
+                    console.log('MEDIA: Error querying session participants.');
+                    return connection.release();
+                }
+
+                socket.emit('JOIN', rows[0].User_Id, rows[0].Username, rows[0].Socket_ID);
+                return connection.release();
+            });
+        });
     });
 };
 
-var processJoinMed = function(socket, connection)
+let processJoinMed = function(socket, connection)
 {
 
     //Tell all those in the room that a new user joined
@@ -152,9 +121,9 @@ var processJoinMed = function(socket, connection)
 
     if(med_io.adapter.rooms[mediaConnData[socket.id].roomId])
     {
-        var clients = med_io.adapter.rooms[mediaConnData[socket.id].roomId].sockets;
+        let clients = med_io.adapter.rooms[mediaConnData[socket.id].roomId].sockets;
         console.log('Clients: ' + clients);
-        for (var client in clients)
+        for (let client in clients)
         {
             (function(client) {setTimeout(notifyUser(client, socket, connection), 0)})(client);
         }
@@ -166,7 +135,7 @@ var processJoinMed = function(socket, connection)
     socket.join(mediaConnData[socket.id].roomId);
     mediaConnData[socket.id].isConnected = true;
 
-    var currTime = new Date();
+    let currTime = new Date();
 
     setTimeout(function()
     {
@@ -190,7 +159,7 @@ var processJoinMed = function(socket, connection)
     console.log('MEDIA: User ' + mediaConnData[socket.id].userId + ' successfully joined room ' + mediaConnData[socket.id].roomId + '.');
 };
 
-var chkSessionMed = function(err, rows, fields, socket, connection)
+let chkSessionMed = function(err, rows, fields, socket, connection)
 {
     if (!err)
     {
@@ -236,7 +205,7 @@ var chkSessionMed = function(err, rows, fields, socket, connection)
     }
 };
 
-var chkParticipantMed = function(err, rows, fields, socket, connection)
+let chkParticipantMed = function(err, rows, fields, socket, connection)
 {
     if (!err)
     {
@@ -267,7 +236,7 @@ var chkParticipantMed = function(err, rows, fields, socket, connection)
 
 };
 
-var findRoomMed = function(err, rows, fields, socket, connection, roomToken)
+let findRoomMed = function(err, rows, fields, socket, connection, roomToken)
 {
     if (!err)
     {
@@ -301,7 +270,7 @@ var findRoomMed = function(err, rows, fields, socket, connection, roomToken)
 
 med_io.on('connection', function(socket)
 {
-    var params = socket.handshake.query;
+    let params = socket.handshake.query;
 
     if(!mediaConnData[socket.id])
     {
@@ -475,10 +444,10 @@ med_io.on('connection', function(socket)
         {
             try
             {
-                var clients = io.sockets.adapter.rooms[mediaConnData[socket.id].roomId];
-                for (var clientId in clients)
+                let clients = io.sockets.adapter.rooms[mediaConnData[socket.id].roomId];
+                for (let clientId in clients)
                 {
-                    var clientSocket = io.sockets.connected[clientId];
+                    let clientSocket = io.sockets.connected[clientId];
 
                     //Tell the new user about everyone else
                     clientSocket.emit('LEAVE', mediaConnData[socket.id].userId);
@@ -549,155 +518,138 @@ med_io.on('connection', function(socket)
 });
 
 
-
-
-
-abstract class Component {
-    public abstract userJoin(socket: SocketIO.Socket, boardConnData: BoardConnection);
-    public abstract sendData(elemData, socket: SocketIO.Socket, connection, boardConnData: BoardConnection);
-    public abstract handleMessage(message: UserMessage, serverId: number, socket: SocketIO.Socket, connection, boardConnData: BoardConnection, my_sql_pool);
-    public abstract handleNew(message, id: number, socket: SocketIO.Socket, connection, boardConnData: BoardConnection, my_sql_pool);
-    public abstract handleUnknownMessage(serverId: number, socket: SocketIO.Socket, connection, boardConnData: BoardConnection);
-    public abstract handleClean(boardConnData: BoardConnection, my_sql_pool);
-    public abstract handleDisconnect(boardConnData: BoardConnection, my_sql_pool);
-    public abstract handleReconnect(boardConnData: BoardConnection, socket: SocketIO.Socket, my_sql_pool);
-}
-
-
-
-
-
-
-/*
- *  Board socket, used for communicating whiteboard data.
- *
- *
- *
- *
- *
- */
-
 let boardConnData : { [id: string] : BoardConnection } = {};
 let connBoardUsers : { [id: number] : string } = {};
 let roomUserList : { [id: number] : Array<number> } = [];
 let roomUserCount : Array<number> = [];
 let modes : Array<string> = [];
-let components : Array<Component> = [];
+let components : Array<ComponentBase.Component> = [];
 
 let registerComponent = (modeName: string, ModeClass) =>
 {
     console.log('REGISTERING COMPONENT: ' + modeName);
     modes.push(modeName);
-    components[modeName] = new ModeClass();
+    components[modeName] = new ModeClass(roomUserList);
 }
 
 let normalizedPath = require("path").join(__dirname, "components");
+
+import ComponentBase = require("./ComponentBase");
 
 require("fs").readdirSync(normalizedPath).forEach(function(file)
 {
     require("./components/" + file)(registerComponent);
 });
 
-var sendDataBor = function(socket: SocketIO.Socket) : void
+let sendDataBor = function(socket: SocketIO.Socket) : void
 {
     my_sql_pool.getConnection((err, connection) =>
     {
-        if(!err)
+        if (err)
         {
-            connection.query('USE Online_Comms',
-            (err) =>
+            console.log('BOARD: Error while getting pool connection. ' + err);
+            return connection.release();
+        }
+
+        connection.query('USE Online_Comms',
+        (err) =>
+        {
+            if (err)
+            {
+                console.log('BOARD: Error while setting database schema. ' + err);
+                return connection.release();
+            }
+
+            connection.query('SELECT * FROM Whiteboard_Space WHERE Room_ID = ? AND isDeleted = 0', [boardConnData[socket.id].roomId],
+            (err, rows: Array<ComponentBase.SQLElementData>, fields) =>
             {
                 if (err)
                 {
-                    console.log('BOARD: Error while setting database schema. ' + err);
-                    connection.release();
+                    console.log('BOARD: Error while getting session elements. ' + err);
+                    return connection.release();
                 }
-                else
+
+                // Send connecting user all data to date.
+                let data = rows;
+                for(let i = 0; i < rows.length; i++)
                 {
-                    connection.query('SELECT * FROM Whiteboard_Space WHERE Room_ID = ? AND isDeleted = 0', [boardConnData[socket.id].roomId],
-                    (err, rows, fields) =>
+                    my_sql_pool.getConnection((err, connection) =>
                     {
                         if (err)
                         {
-                            connection.release();
-                            console.log('BOARD: Error while performing existing curve query. ' + err);
+                            console.log('BOARD: Error while getting pool connection. ' + err);
+                            return connection.release();
                         }
-                        else
+
+                        connection.query('USE Online_Comms',
+                        (err) =>
                         {
-                            // Send connecting user all data to date.
-                            let data = rows;
-                            for(let i = 0; i < rows.length; i++)
+                            if (err)
                             {
-                                my_sql_pool.getConnection((err, connection) =>
-                                {
-                                    if(!err)
-                                    {
-                                        connection.query('USE Online_Comms',
-                                        (err) =>
-                                        {
-                                            if (err)
-                                            {
-                                                console.log('BOARD: Error while setting database schema. ' + err);
-                                                connection.release();
-                                            }
-                                            else
-                                            {
-                                                components[data[i].Type].sendData(data[i], socket, connection, boardConnData[socket.id]);
-                                            }
-                                        });
-                                    }
-                                });
+                                console.log('BOARD: Error while setting database schema. ' + err);
+                                return connection.release();
                             }
-                        }
-                        connection.release();
+
+                            components[data[i].Type].sendData(data[i], socket, connection, boardConnData[socket.id]);
+                        });
                     });
                 }
-            });
-        }
-    });
 
+                return connection.release();
+            });
+        });
+    });
 }
 
-var chkHost = function(err, rows, fields, socket: SocketIO.Socket, connection) : void
+let chkHost = function(err, rows, fields, socket: SocketIO.Socket, connection: MySql.SQLConnection) : void
 {
     if (err)
     {
         console.log('BOARD: Error while performing tutor id query. ' + err);
+        return connection.release();
     }
-    else
+
+    if(rows[0] != null && rows[0] != undefined)
     {
-        if(rows[0])
-        {
-            boardConnData[socket.id].isHost = true;
-        }
-
-        var currTime = new Date();
-        setTimeout(() =>
-        {
-            console.log('BOARD: Session over.')
-            socket.disconnect();
-        }, (boardConnData[socket.id].startTime.getTime() + boardConnData[socket.id].sessLength + 600000) - currTime.getTime());
-
-        boardConnData[socket.id].isConnected = true;
-
-        socket.emit('CONNOK');
-        clearTimeout(boardConnData[socket.id].joinTimeout);
-
-        console.log('BOARD: User ' + boardConnData[socket.id].userId + ' successfully joined room ' + boardConnData[socket.id].roomId + '.');
-        setTimeout(() => { sendDataBor(socket); }, 0);
+        boardConnData[socket.id].isHost = true;
     }
-    connection.release();
+
+    let currTime = new Date();
+    setTimeout(() =>
+    {
+        console.log('BOARD: Session over.')
+        socket.disconnect();
+    }, (boardConnData[socket.id].startTime.getTime() + boardConnData[socket.id].sessLength + 600000) - currTime.getTime());
+
+    boardConnData[socket.id].isConnected = true;
+
+    socket.emit('CONNOK');
+    clearTimeout(boardConnData[socket.id].joinTimeout);
+
+    console.log('BOARD: User ' + boardConnData[socket.id].userId + ' successfully joined room ' + boardConnData[socket.id].roomId + '.');
+    setTimeout(() => { sendDataBor(socket); }, 0);
+
+    return connection.release();
 }
 
-var notifyBoardUser = function(client, socket: SocketIO.Socket) : void
+let notifyBoardUser = function(client, socket: SocketIO.Socket) : void
 {
-    var msg : ServerBoardJoinMessage = {userId: boardConnData[client].userId, colour: roomUserList[boardConnData[client].roomId][boardConnData[client].userId]};
+    let msg : ServerBoardJoinMessage = {userId: boardConnData[client].userId, colour: roomUserList[boardConnData[client].roomId][boardConnData[client].userId]};
     socket.emit('JOIN', msg);
 };
 
-var processJoinBor = function(socket: SocketIO.Socket, connection) : void
+let endSession = function(id: number)
 {
-    var colour : number;
+    for(let i = 0; i < modes.length; i++)
+    {
+        let component = components[modes[i]];
+        component.sessionEnd(boardConnData[id]);
+    }
+}
+
+let processJoinBor = function(socket: SocketIO.Socket, connection) : void
+{
+    let colour : number;
 
     if(!roomUserList[boardConnData[socket.id].roomId])
     {
@@ -718,14 +670,17 @@ var processJoinBor = function(socket: SocketIO.Socket, connection) : void
 
     boardConnData[socket.id].colour = colour;
 
-    var msg : ServerBoardJoinMessage = { userId: boardConnData[socket.id].userId, colour: colour };
+    clearTimeout(boardConnData[socket.id].sessionTimeout);
+    boardConnData[socket.id].sessionTimeout = setTimeout(endSession, boardConnData[socket.id].sessLength + 1000, socket.id);
+
+    let msg : ServerBoardJoinMessage = { userId: boardConnData[socket.id].userId, colour: colour };
     bor_io.to(boardConnData[socket.id].roomId.toString()).emit('JOIN', msg);
 
     if(bor_io.adapter.rooms[boardConnData[socket.id].roomId])
     {
-        var clients = bor_io.adapter.rooms[boardConnData[socket.id].roomId].sockets;
+        let clients = bor_io.adapter.rooms[boardConnData[socket.id].roomId].sockets;
         console.log('Clients: ' + clients);
-        for (var client in clients)
+        for (let client in clients)
         {
             ((client) => {setTimeout(notifyBoardUser(client, socket), 0)})(client);
         }
@@ -745,21 +700,19 @@ var processJoinBor = function(socket: SocketIO.Socket, connection) : void
             if (err)
             {
                 console.error("BOARD: Unable to log user connection. " + err);
-                connection.release();
+                return connection.release();
             }
-            else
+
+            connection.query('INSERT INTO Connection_Logs(User_ID, Room_ID, Type, Source) VALUES (?, ?, ?, ?)',
+            [boardConnData[socket.id].userId, boardConnData[socket.id].roomId, 'CONNECT', 'BOARD'],
+            (err) =>
             {
-                connection.query('INSERT INTO Connection_Logs(User_ID, Room_ID, Type, Source) VALUES (?, ?, ?, ?)',
-                [boardConnData[socket.id].userId, boardConnData[socket.id].roomId, 'CONNECT', 'BOARD'],
-                (err) =>
+                if(err)
                 {
-                    if(err)
-                    {
-                        console.error("BOARD: Unable to log user connection. " + err);
-                    }
-                    connection.release();
-                });
-            }
+                    console.error("BOARD: Unable to log user connection. " + err);
+                }
+                connection.release();
+            });
         });
     });
 
@@ -786,7 +739,7 @@ var processJoinBor = function(socket: SocketIO.Socket, connection) : void
     socket.join(boardConnData[socket.id].roomId.toString());
 };
 
-var chkSessionBor = function(err, rows, fields, socket: SocketIO.Socket, connection) : void
+let chkSessionBor = function(err, rows, fields, socket: SocketIO.Socket, connection) : void
 {
     if (!err)
     {
@@ -830,7 +783,7 @@ var chkSessionBor = function(err, rows, fields, socket: SocketIO.Socket, connect
     }
 };
 
-var chkParticipantBor = function(err, rows, fields, socket: SocketIO.Socket, connection) : void
+let chkParticipantBor = function(err, rows, fields, socket: SocketIO.Socket, connection: MySql.SQLConnection) : void
 {
     if (!err)
     {
@@ -861,7 +814,7 @@ var chkParticipantBor = function(err, rows, fields, socket: SocketIO.Socket, con
 
 };
 
-var findRoomBor = function(err, rows, fields, socket: SocketIO.Socket, connection, roomToken: string) : void
+let findRoomBor = function(err, rows, fields, socket: SocketIO.Socket, connection: MySql.SQLConnection, roomToken: string) : void
 {
     if (!err)
     {
@@ -892,7 +845,7 @@ var findRoomBor = function(err, rows, fields, socket: SocketIO.Socket, connectio
     }
 };
 
-var cleanConnection = function(socketID: string) : void
+let cleanConnection = function(socketID: string, socket: SocketIO.Socket) : void
 {
     console.log('BOARD: Cleaning Connection....');
 
@@ -901,22 +854,20 @@ var cleanConnection = function(socketID: string) : void
     for(let i = 0; i < modes.length; i++)
     {
         let component = components[modes[i]];
-        component.handleClean(boardConnData[socketID], my_sql_pool);
+        component.handleClean(boardConnData[socketID], socket, my_sql_pool);
     }
 };
 
-var endConnection = function(socketID: string) : void
+let endConnection = function(socketID: string, socket: SocketIO.Socket) : void
 {
     console.log('BOARD: Ending Connection....');
-    cleanConnection(socketID);
+    cleanConnection(socketID, socket);
     boardConnData[socketID].isConnected = false;
 };
 
-var handleDeleteMessages = (serverIds: Array<number>, socket: SocketIO.Socket, connection, boardConnData: BoardConnection) =>
+let handleDeleteMessages = (serverIds: Array<number>, socket: SocketIO.Socket, connection: MySql.SQLConnection, boardConnData: BoardConnection) =>
 {
-    console.log('Received Delete Curves Event.');
-
-    let commitFunc = (serverIds, connection, socket: SocketIO.Socket, boardConnData: BoardConnection) =>
+    let commitFunc = (serverIds: Array<number>, connection: MySql.SQLConnection, socket: SocketIO.Socket, boardConnData: BoardConnection) =>
     {
         connection.commit((err) =>
         {
@@ -928,7 +879,7 @@ var handleDeleteMessages = (serverIds: Array<number>, socket: SocketIO.Socket, c
                     payload.push(serverIds[i]);
                 }
 
-                let msg: ServerMessage = { header: ElementMessageTypes.DELETE, payload: payload };
+                let msg: ServerMessage = { header: ComponentBase.BaseMessageTypes.DELETE, payload: payload };
                 let msgCont: ServerMessageContainer =
                 {
                     serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
@@ -943,7 +894,7 @@ var handleDeleteMessages = (serverIds: Array<number>, socket: SocketIO.Socket, c
         });
     };
 
-    let updateFunc = (serverIds, connection, socket: SocketIO.Socket, boardConnData: BoardConnection, commitCallback, index: number = 0) =>
+    let updateFunc = (serverIds: Array<number>, connection: MySql.SQLConnection, socket: SocketIO.Socket, boardConnData: BoardConnection, commitCallback, index: number = 0) =>
     {
         if(index < serverIds.length)
         {
@@ -984,7 +935,7 @@ var handleDeleteMessages = (serverIds: Array<number>, socket: SocketIO.Socket, c
     }
     else if(boardConnData.allowUserEdit)
     {
-        let selectFunc = (serverIds, updateList, connection, socket: SocketIO.Socket, boardConnData: BoardConnection, index: number = 0, resolvedList = []) =>
+        let selectFunc = (serverIds: Array<number>, updateList: Array<number>, connection: MySql.SQLConnection, socket: SocketIO.Socket, boardConnData: BoardConnection, index: number = 0, resolvedList = []) =>
         {
             if(index < serverIds.length)
             {
@@ -993,7 +944,7 @@ var handleDeleteMessages = (serverIds: Array<number>, socket: SocketIO.Socket, c
                 {
                     if (!err)
                     {
-                        if(rows[0])
+                        if(rows[0] != null && rows[0] != undefined)
                         {
                             resolvedList.push(serverIds[index]);
                         }
@@ -1027,11 +978,9 @@ var handleDeleteMessages = (serverIds: Array<number>, socket: SocketIO.Socket, c
     }
 }
 
-var handleRestoreMessages = (serverIds: Array<number>, socket: SocketIO.Socket, connection, boardConnData: BoardConnection) =>
+let handleRestoreMessages = (serverIds: Array<number>, socket: SocketIO.Socket, connection: MySql.SQLConnection, boardConnData: BoardConnection) =>
 {
-    console.log('Received Restore Curves Event.');
-
-    let commitFunc = (serverIds, connection, socket: SocketIO.Socket, boardConnData: BoardConnection) =>
+    let commitFunc = (serverIds: Array<number>, connection: MySql.SQLConnection, socket: SocketIO.Socket, boardConnData: BoardConnection) =>
     {
         connection.commit((err) =>
         {
@@ -1043,7 +992,7 @@ var handleRestoreMessages = (serverIds: Array<number>, socket: SocketIO.Socket, 
                     payload.push(serverIds[i]);
                 }
 
-                let msg: ServerMessage = { header: ElementMessageTypes.RESTORE, payload: payload };
+                let msg: ServerMessage = { header: ComponentBase.BaseMessageTypes.RESTORE, payload: payload };
                 let msgCont: ServerMessageContainer =
                 {
                     serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
@@ -1058,7 +1007,7 @@ var handleRestoreMessages = (serverIds: Array<number>, socket: SocketIO.Socket, 
         });
     };
 
-    let updateFunc = (serverIds, connection, socket: SocketIO.Socket, boardConnData: BoardConnection, commitCallback, index: number = 0) =>
+    let updateFunc = (serverIds: Array<number>, connection: MySql.SQLConnection, socket: SocketIO.Socket, boardConnData: BoardConnection, commitCallback, index: number = 0) =>
     {
         if(index < serverIds.length)
         {
@@ -1099,7 +1048,9 @@ var handleRestoreMessages = (serverIds: Array<number>, socket: SocketIO.Socket, 
     }
     else if(boardConnData.allowUserEdit)
     {
-        let selectFunc = (serverIds, updateList, connection, socket: SocketIO.Socket, boardConnData: BoardConnection, index: number = 0, resolvedList = []) =>
+        let selectFunc =
+        (serverIds: Array<number>, updateList: Array<number>, connection: MySql.SQLConnection, socket: SocketIO.Socket,
+            boardConnData: BoardConnection, index: number = 0, resolvedList: Array<number> = []) =>
         {
             if(index < serverIds.length)
             {
@@ -1108,7 +1059,7 @@ var handleRestoreMessages = (serverIds: Array<number>, socket: SocketIO.Socket, 
                 {
                     if (!err)
                     {
-                        if(rows[0])
+                        if(rows[0] != null && rows[0] != undefined)
                         {
                             resolvedList.push(serverIds[index]);
                         }
@@ -1143,7 +1094,8 @@ var handleRestoreMessages = (serverIds: Array<number>, socket: SocketIO.Socket, 
 }
 
 
-var handleMoveMessages = (messages: Array<{id: number, x: number, y: number}>, socket: SocketIO.Socket, connection, boardConnData: BoardConnection) =>
+let handleMoveMessages =
+(messages: Array<{id: number, x: number, y: number}>, socket: SocketIO.Socket, connection: MySql.SQLConnection, boardConnData: BoardConnection) =>
 {
     let self = this;
     console.log('Received Move Curves Event.');
@@ -1161,7 +1113,9 @@ var handleMoveMessages = (messages: Array<{id: number, x: number, y: number}>, s
     }
     else if(boardConnData.allowUserEdit)
     {
-        let selectFunc = (messages, updateList, connection, socket: SocketIO.Socket, boardConnData: BoardConnection, index: number = 0, resolvedList = []) =>
+        let selectFunc =
+        (messages, updateList: Array<Array<number>>, connection: MySql.SQLConnection, socket: SocketIO.Socket,
+            boardConnData: BoardConnection, index: number = 0, resolvedList: Array<Array<number>> = []) =>
         {
             if(index < messages.length)
             {
@@ -1170,7 +1124,7 @@ var handleMoveMessages = (messages: Array<{id: number, x: number, y: number}>, s
                 {
                     if (!err)
                     {
-                        if(rows[0])
+                        if(rows[0] != null && rows[0] != undefined)
                         {
                             resolvedList.push(updateList[index]);
                         }
@@ -1193,9 +1147,9 @@ var handleMoveMessages = (messages: Array<{id: number, x: number, y: number}>, s
     }
 }
 
-var handleMoves = (updates, connection, socket: SocketIO.Socket, boardConnData: BoardConnection) =>
+let handleMoves = (updates: Array<Array<number>>, connection: MySql.SQLConnection, socket: SocketIO.Socket, boardConnData: BoardConnection) =>
 {
-    let commitFunc = (updates, connection, socket: SocketIO.Socket, boardConnData: BoardConnection) =>
+    let commitFunc = (updates: Array<Array<number>>, connection: MySql.SQLConnection, socket: SocketIO.Socket, boardConnData: BoardConnection) =>
     {
         connection.commit((err) =>
         {
@@ -1208,7 +1162,7 @@ var handleMoves = (updates, connection, socket: SocketIO.Socket, boardConnData: 
                     payload.push({ id: updates[i][2], x: updates[i][0], y: updates[i][1], editTime: new Date() });
                 }
 
-                let msg: ServerMessage = { header: ElementMessageTypes.MOVE, payload: payload };
+                let msg: ServerMessage = { header: ComponentBase.BaseMessageTypes.MOVE, payload: payload };
                 let msgCont: ServerMessageContainer =
                 {
                     serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
@@ -1223,7 +1177,9 @@ var handleMoves = (updates, connection, socket: SocketIO.Socket, boardConnData: 
         });
     };
 
-    let updateFunc = (updates, connection, socket: SocketIO.Socket, boardConnData: BoardConnection, commitCallback, index: number = 0) =>
+    let updateFunc =
+    (updates: Array<Array<number>>, connection: MySql.SQLConnection, socket: SocketIO.Socket,
+        boardConnData: BoardConnection, commitCallback, index: number = 0) =>
     {
         if(index < updates.length)
         {
@@ -1278,7 +1234,7 @@ bor_io.on('connection', function(socket)
     {
         boardConnData[socket.id] = {
             isHost: false, isConnected: false, isJoining: false, allowUserEdit: true, cleanUp: false, sessId: 0, roomId: 0, userId: 0,
-            joinTimeout: null, startTime: null, sessLength: 0, username: '', colour: 0, allowAllEdit: false
+            joinTimeout: null, startTime: null, sessLength: 0, username: '', colour: 0, allowAllEdit: false, sessionTimeout: null
         };
     }
 
@@ -1304,7 +1260,6 @@ bor_io.on('connection', function(socket)
 
     socket.on('disconnect', () =>
     {
-
         try
         {
             clearTimeout(boardConnData[socket.id].joinTimeout);
@@ -1338,7 +1293,7 @@ bor_io.on('connection', function(socket)
             if(boardConnData[socket.id].isConnected)
             {
                 console.log('Setting connection clean callback.');
-                boardConnData[socket.id].disconnectTimeout = setTimeout(endConnection, 5000, socket.id);
+                boardConnData[socket.id].disconnectTimeout = setTimeout(endConnection, 5000, socket.id, socket);
 
                 // Let components handle disconnect.
                 for(let i = 0; i < modes.length; i++)
@@ -1424,7 +1379,7 @@ bor_io.on('connection', function(socket)
             try
             {
                 console.log('Received leave.');
-                endConnection(socket.id);
+                endConnection(socket.id, socket);
                 socket.leave(boardConnData[socket.id].roomId.toString());
             }
             catch (e)
@@ -1462,30 +1417,41 @@ bor_io.on('connection', function(socket)
                                 if (!err)
                                 {
                                     let message = data.payload;
-                                    connection.query('INSERT INTO ' +
-                                    'Whiteboard_Space(Type, Room_ID, User_ID, Local_ID, X_Loc, Y_Loc, Width, Height) ' +
-                                    'VALUES(?, ?, ?, ?, ?, ?, ?, ?)',
+                                    let insertData: ComponentBase.SQLElementInsert =
                                     [
                                         data.type, boardConnData[socket.id].roomId, boardConnData[socket.id].userId,
-                                        message.localId, message.x, message.y, message.width, message.height
-                                    ],
+                                        message.localId, message.x, message.y, message.width, message.height, 0,
+                                        message.editLock ? boardConnData[socket.id].userId : null
+                                    ];
+                                    connection.query('INSERT INTO Whiteboard_Space(' + ComponentBase.SQLElementInsertQuery + ') ' +
+                                    'VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                                    insertData,
                                     (err, result) =>
                                     {
                                         if (err)
                                         {
-                                            console.log('BOARD: Error while performing new curve query.' + err);
-                                            return connection.rollback(() => { console.error(err); connection.release(); });
+                                            console.log('BOARD: Error while performing new element query.' + err);
+                                            return connection.rollback(() => { connection.release(); });
                                         }
                                         else
                                         {
-                                            components[data.type].handleNew(message, result.insertId, socket, connection, boardConnData[socket.id], my_sql_pool);
+                                            if(components[data.type])
+                                            {
+                                                components[data.type].handleNew(message, result.insertId, socket, connection,
+                                                    boardConnData[socket.id], my_sql_pool);
+                                            }
+                                            else
+                                            {
+                                                console.log('BOARD: Unrecognized componenet type.');
+                                                return connection.rollback(() => { connection.release(); });
+                                            }
                                         }
                                     });
                                 }
                                 else
                                 {
-                                    console.log('BOARD: Error while performing new curve query.' + err);
-                                    return connection.rollback(() => { console.error(err); connection.release(); });
+                                    console.log('BOARD: Error while performing new element query.' + err);
+                                    return connection.rollback(() => { connection.release(); });
                                 }
                             });
                         }
@@ -1501,59 +1467,67 @@ bor_io.on('connection', function(socket)
 
     socket.on('MSG-COMPONENT', (data : UserMessageContainer) =>
     {
-        my_sql_pool.getConnection((err, connection) =>
+        if(components[data.type])
         {
-            if(!err)
+            my_sql_pool.getConnection((err, connection) =>
             {
-                connection.query('USE Online_Comms',
-                (err) =>
+                if(!err)
                 {
-                    if (err)
+                    connection.query('USE Online_Comms',
+                    (err) =>
                     {
-                        console.log('BOARD: Error while setting database schema. ' + err);
-                        connection.release();
-                    }
-                    else
-                    {
-                        if(data.type == 'ANY')
+                        if (err)
                         {
-                            let message = data.payload;
-                            switch(message.header)
-                            {
-                                case ElementMessageTypes.DELETE:
-                                    let delServerIds = message.payload as Array<number>;
-                                    if(delServerIds.length  > 0)
-                                    {
-                                        handleDeleteMessages(delServerIds, socket, connection, boardConnData[socket.id]);
-                                    }
-                                    break;
-                                case ElementMessageTypes.RESTORE:
-                                    let resServerIds = message.payload as Array<number>;
-                                    if(resServerIds.length  > 0)
-                                    {
-                                        handleRestoreMessages(resServerIds, socket, connection, boardConnData[socket.id]);
-                                    }
-                                    break;
-                                case ElementMessageTypes.MOVE:
-                                    let moveMessages = message.payload as Array<{id: number, x: number, y: number}>;
-                                    handleMoveMessages(moveMessages, socket, connection, boardConnData[socket.id]);
-                                    break;
-                                default:
-                                    break;
-                            }
+                            console.log('BOARD: Error while setting database schema. ' + err);
+                            connection.release();
                         }
                         else
                         {
-                            components[data.type].handleMessage(data.payload, data.id, socket, connection, boardConnData[socket.id], my_sql_pool);
+                            if(data.type == 'ANY')
+                            {
+                                let message = data.payload;
+                                switch(message.header)
+                                {
+                                    case ComponentBase.BaseMessageTypes.DELETE:
+                                        let delServerIds = message.payload as Array<number>;
+                                        if(delServerIds.length  > 0)
+                                        {
+                                            handleDeleteMessages(delServerIds, socket, connection, boardConnData[socket.id]);
+                                        }
+                                        break;
+                                    case ComponentBase.BaseMessageTypes.RESTORE:
+                                        let resServerIds = message.payload as Array<number>;
+                                        if(resServerIds.length  > 0)
+                                        {
+                                            handleRestoreMessages(resServerIds, socket, connection, boardConnData[socket.id]);
+                                        }
+                                        break;
+                                    case ComponentBase.BaseMessageTypes.MOVE:
+                                        let moveMessages = message.payload as Array<{id: number, x: number, y: number}>;
+                                        handleMoveMessages(moveMessages, socket, connection, boardConnData[socket.id]);
+                                        break;
+                                    default:
+                                        break;
+                                }
+                            }
+                            else
+                            {
+                                components[data.type].handleMessage(data.payload, data.id, socket, connection, boardConnData[socket.id], my_sql_pool);
+                            }
                         }
-                    }
-                });
-            }
-            else
-            {
-                console.log('BOARD: Error getting database connection.');
-            }
-        });
+                    });
+                }
+                else
+                {
+                    console.log('BOARD: Error getting database connection.');
+                }
+            });
+        }
+        else
+        {
+            console.log('BOARD: Unrecognized componenet type.');
+            return;
+        }
     });
 
     socket.on('UNKNOWN-ELEMENT', (data: UserUnknownElement) =>
@@ -1687,16 +1661,16 @@ bor_io.on('connection', function(socket)
     });
 });
 
-var reqOpt = {
+let reqOpt = {
   host: '169.254.169.254',
   port: 80,
   path: '/latest/meta-data/public-hostname'
 };
 
-var endPointAddr;
-var zone;
+let endPointAddr;
+let zone;
 
-var checkServers = function(err, rows, connection)
+let checkServers = function(err, rows, connection)
 {
     if(!err)
     {
@@ -1707,7 +1681,13 @@ var checkServers = function(err, rows, connection)
                 if(err)
                 {
                     console.log('Error registering server in list. ' + err);
+                    return connection.release();
                 }
+
+                https.listen(9001, () =>
+                {
+                    console.log("Server listening at", "*:" + 9001);
+                });
 
                 connection.release();
             });
@@ -1715,6 +1695,12 @@ var checkServers = function(err, rows, connection)
         else
         {
             console.log('Server already in list.');
+
+            https.listen(9001, () =>
+            {
+                console.log("Server listening at", "*:" + 9001);
+            });
+
             connection.release();
         }
     }
@@ -1724,7 +1710,7 @@ var checkServers = function(err, rows, connection)
     }
 }
 
-var getServerData = function(chunk)
+let getServerData = function(chunk)
 {
     console.log('Zone: ' + chunk);
     zone = chunk;
@@ -1733,7 +1719,7 @@ var getServerData = function(chunk)
     {
         if(!err)
         {
-            var qStr;
+            let qStr;
             console.log('Adding to server list.......');
 
             connection.query('USE Online_Comms',
@@ -1805,9 +1791,4 @@ require('http').get(reqOpt, (res) =>
 }).on('error', (e) =>
 {
     console.log("Error retrieving server endpoint: " + e.message);
-});
-
-https.listen(9001, () =>
-{
-    console.log("Server listening at", "*:" + 9001);
 });

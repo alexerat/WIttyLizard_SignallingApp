@@ -1,8 +1,14 @@
 {"files": [
         "./comm_server.ts",
+        "./ComponentBase.ts",
         "./components/FreeCurve.ts",
+        "./components/Text.ts",
+        "./components/Upload.ts",
+        "./components/Highlight.ts",
         "./typings/node.d.ts",
         "./typings/mysql.d.ts",
         "./typings/socket.io.d.ts",
-        "./typings/whiteboard.d.ts"
+        "./typings/whiteboard.d.ts",
+        "./typings/connection.d.ts",
+        "./typings/commsql.d.ts"
 ]}

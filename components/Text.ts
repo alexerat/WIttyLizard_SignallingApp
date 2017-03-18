@@ -1,154 +1,342 @@
-/** Free Curve Component.
+import ComponentBase = require("../ComponentBase");
+
+/** Text Component.
 *
-* This allows the user to free draw curves that will be smoothed and rendered as Beziers.
+* This allows the user to write text that will be rendered as SVG text.
 *
 */
-namespace Text {
+namespace TextBox {
     /**
      * The name of the mode associated with this component.
      */
     export const MODENAME = 'TEXT';
 
-    interface ServerNewCurvePayload extends ServerMessage {
+    let typeCheck = require('check-types');
+
+    interface Style {
+        weight: string;
+        style: string;
+        colour: string;
+        oline: boolean;
+        uline: boolean;
+        tline: boolean;
+    }
+    interface TextStyle extends Style {
+        start: number;
+        end: number;
+        text: string;
+        seq_num: number;
+    }
+
+
+
+    interface ServerNewTextPayload extends ServerMessage {
         x: number;
         y: number;
         width: number;
         height: number;
+        justified: boolean;
+        editCount: number;
         userId: number;
         size: number;
-        colour: string;
-        num_points: number;
+        editLock: number;
+        editTime: Date;
+        num_styles: number;
+        nodes: Array<NodeContainer>;
+    }
+    interface ServerStyleNodeMessage extends ServerMessagePayload {
+        editId: number;
+        userId: number;
+        node: TextStyle;
+    }
+    interface ServerMissedMessage extends ServerMessagePayload {
+        editId: number;
+        num: number;
+    }
+    interface ServerResizeMessage extends ServerMessagePayload {
+        width: number;
+        height: number;
         editTime: Date;
     }
-    interface ServerNewPointMessage extends ServerPayload {
-        num: number;
-        x: number;
-        y: number;
+    interface ServerJustifyMessage extends ServerMessagePayload {
+        newState: boolean;
     }
-    interface ServerMissedPointMessage extends ServerPayload {
-        num: number;
+    interface ServerEditMessage extends ServerMessagePayload {
+        userId: number;
+        editId: number;
+        num_styles: number;
+        styles: Array<TextStyle>;
+        editTime: Date;
+    }
+    interface ServerEditIdMessage extends ServerMessagePayload {
+        editId: number;
+        bufferId: number;
+        localId: number;
+    }
+    interface ServerLockIdMessage extends ServerMessagePayload {
+
+    }
+    interface ServerLockMessage extends ServerMessagePayload {
+        userId: number;
+    }
+    interface ServerChangeSizeMessage extends ServerMessagePayload {
+        newSize: number;
+    }
+    interface ServerDroppedMessage extends ServerMessagePayload {
+        editId: number;
+        bufferId: number;
     }
 
-    interface UserNewCurveMessage extends UserNewElementPayload {
-        colour: string;
-        size: number;
-        num_points: number;
-    }
-    interface UserNewPointMessage extends UserMessagePayload {
-        num: number;
-        x: number;
-        y: number;
-    }
-    interface UserMissingPointMessage extends UserMessagePayload {
+    interface NodeContainer extends Style {
         seq_num: number;
+        start: number;
+        end: number;
+        text: string;
+    }
+
+    interface UserNewTextMessage extends UserNewElementPayload {
+        size: number;
+        justified: boolean;
+    }
+    interface UserEditMessage extends UserMessagePayload {
+        bufferId: number;
+        num_styles: number;
+        nodes: Array<TextStyle>;
+    }
+    interface UserNodeMessage extends UserMessagePayload {
+        editId: number;
+        node: TextStyle;
+    }
+    interface UserJustifyMessage extends UserMessagePayload {
+        newState: boolean;
+    }
+    interface UserResizeMessage extends UserMessagePayload {
+        width: number;
+        height: number;
+    }
+    interface UserMissingNodeMessage extends UserMessagePayload {
+        editId: number;
+        userId: number;
+        seq_num: number;
+    }
+    interface UserChangeSizeMessage extends UserMessagePayload {
+        newSize: number;
     }
 
     interface ComponentData {
-        numNodes: Array<number>;
-        nodeRetries: Array<number>;
-        recievedNodes: Array<Array<TextStyle>>;
-        editCount: number;
-        textTimeouts;
-        editIds: Array<{textId: number, localId:number}>;
+        edits: Array<Array<EditData>>;
+        editCounts: Array<number>;
+        incompleteEdits: Array<{textId: number, editId: number}>;
+    }
+
+    interface EditData {
+        textId: number;
+        localId: number;
+        numNodes: number;
+        numRecieved: number;
+        cleanedNodes: Array<TextStyle>;
+        recievedNodes: Array<boolean>;
+        nodeTimeout: any;
+        nodeRetries: number;
+    }
+
+
+    /*SQL Tables */
+    interface SQLTextData {
+        Entry_ID: number;
+        Num_Style_Nodes: number;
+        Size: number;
+        Justified: boolean;
+    }
+    interface SQLNodeData {
+        Entry_ID: number;
+        Seq_Num: number;
+        Text_Data: string;
+        Colour: string;
+        Weight: string;
+        Style: string;
+        isOverline: boolean;
+        isUnderline: boolean;
+        isThroughline: boolean;
+        Start: number;
+        End: number;
     }
 
     /**
      * Message types that can be sent ebtween the user and server.
      */
     const MessageTypes = {
-        NEW: 0,
-        DELETE: 1,
-        RESTORE: 2,
-        IGNORE: 3,
-        COMPLETE: 4,
-        DROPPED: 5,
-        MOVE: 6,
-        POINT: 7,
-        POINTMISSED: 8,
-        MISSINGPOINT: 9
+        NODE: 1,
+        MISSED: 2,
+        JUSTIFY: 3,
+        EDIT: 4,
+        COMPLETE: 5,
+        DROPPED: 6,
+        IGNORE: 7,
+        SIZECHANGE: 8
     };
+
+
 
     /** Free Curve Component.
     *
     * This is the class that will be used to store the data associated with these components and handle component specific messaging.
     *
     */
-    export class ComponentClass extends Component
+    export class ComponentClass extends ComponentBase.Component
     {
         componentData: Array<ComponentData> = [];
 
         /** Initialize the buffers for this component and socket.
          *
          *  @param {SocketIO.Socket} socket - The socket for this connection.
-         *  @param {BoardConnection} The connection data associated with this socket.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
          */
         public userJoin(socket: SocketIO.Socket, boardConnData: BoardConnection)
         {
+            let userData: ComponentData = this.componentData[boardConnData.userId];
 
-            let userData: ComponentData = { numRecieved: [], numPoints: [], recievedPoints: [], pointRetries: [], curveTimeouts: [] };
-            this.componentData[boardConnData.userId] = userData;
+            if(userData == undefined || userData == null)
+            {
+                userData = {
+                    editCounts: [], edits: [], incompleteEdits: []
+                };
+                this.componentData[boardConnData.userId] = userData;
+            }
+        }
+
+        /** Remove all data for this connection associated with this component.
+         *
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
+        public sessionEnd(boardConnData: BoardConnection)
+        {
+            let userData: ComponentData = this.componentData[boardConnData.userId];
+
+            if(userData != undefined && userData != null)
+            {
+                userData.editCounts = null;
+                userData.edits = null;
+                userData.incompleteEdits = null;
+            }
+
+            userData = null;
+        }
+
+        private sendNode(serverId: number, editId: number, nodeData: TextStyle, socket: SocketIO.Socket, boardConnData: BoardConnection)
+        {
+            let nodeCont: NodeContainer =
+            {
+                seq_num: nodeData.seq_num, start: nodeData.start, end: nodeData.end, text: nodeData.text,
+                weight: nodeData.weight, colour: nodeData.colour, style: nodeData.style, oline: nodeData.oline,
+                uline: nodeData.uline, tline: nodeData.tline
+            };
+
+            let textMsg: ServerStyleNodeMessage = {
+                editId: editId,
+                userId: boardConnData.userId,
+                node: nodeCont
+            };
+            let nodeMsg: ServerMessage =
+            {
+                header: MessageTypes.NODE, payload: textMsg
+            };
+            let msgCont: ServerMessageContainer =
+            {
+                serverId: serverId, userId: boardConnData.userId, type: MODENAME, payload: nodeMsg
+            };
+
+            socket.emit('MSG-COMPONENT', msgCont);
         }
 
         /** Handle the initial sending of this element data to the user.
          *
-         *  @param {SQLReturn} elemData - The basic data about this element.
+         *  @param {SQLElementData} elemData - The basic data about this element.
          *  @param {SocketIO.Socket} socket - The socket for this connection.
-         *  @param {SQLConnection} connection - The SQL connection to query against.
+         *  @param {MySql.SQLConnection} connection - The SQL connection to query against.
          *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
          */
-        public sendData(elemData, socket: SocketIO.Socket, connection, boardConnData: BoardConnection)
+        public sendData(elemData: ComponentBase.SQLElementData, socket: SocketIO.Socket, connection: MySql.SQLConnection, boardConnData: BoardConnection)
         {
-            /*
-            connection.query('SELECT * FROM Text_Space WHERE Room_ID = ? AND isDeleted = 0', [boardConnData[socket.id].roomId], function(err, rows, fields)
+            connection.query('SELECT * FROM Text_Space WHERE Entry_ID = ?',
+            [elemData.Entry_ID],
+            function(err, rows: Array<SQLTextData>, fields)
             {
-                if (err)
+                if(err)
                 {
+                    console.log("Error getting text data. " + err);
                     connection.release();
-                    console.log('BOARD: Error while performing existing text query. ' + err);
+                    return;
                 }
-                else
-                {
-                    for(i = 0; i < rows.length; i++)
-                    {
-                        let msg: ServerNewTextboxMessage = {
-                            serverId: rows[i].Entry_ID, userId: rows[i].User_ID, size: rows[i].Size, x: rows[i].Pos_X, editCount: 0,
-                            y: rows[i].Pos_Y, width: rows[i].Width, height: rows[i].Height, editLock: rows[i].Edit_Lock, justified: rows[i].Justified,
-                            editTime: rows[i].Edit_Time
-                        }
-                        socket.emit('TEXTBOX', msg);
 
-                        (function(data, i) {setTimeout(function() {sendText(data[i], socket);}, i * 5 + 100)})(rows, i);
-                    }
+                if(rows == undefined || rows[0] == undefined)
+                {
+                    console.log("BAD TEXT DATA");
+                    connection.release();
+                    return;
                 }
+
+                connection.query('SELECT * FROM Text_Style_Node WHERE Entry_ID = ?', [elemData.Entry_ID], (err, prows: Array<SQLNodeData>, pfields) =>
+                {
+                    if (err)
+                    {
+                        console.log('BOARD: Error while performing existing style node query. ' + err);
+                        connection.release();
+                        return;
+                    }
+
+                    let styles: Array<NodeContainer> = [];
+
+                    for(let i = 0; i < prows.length; i++)
+                    {
+                        let nodeCont: NodeContainer =
+                        {
+                            seq_num: prows[i].Seq_Num, start: prows[i].Start, end: prows[i].End, text: prows[i].Text_Data,
+                            weight: prows[i].Weight, colour: prows[i].Colour, style: prows[i].Style, oline: prows[i].isOverline,
+                            uline: prows[i].isUnderline, tline: prows[i].isThroughline
+                        };
+
+                        styles.push(nodeCont);
+                    }
+
+                    let textMsg: ServerNewTextPayload = {
+                        header: null, payload: null, num_styles: rows[0].Num_Style_Nodes, userId: elemData.User_ID,
+                        size: rows[0].Size, x: elemData.X_Loc, y: elemData.Y_Loc, width: elemData.Width, height: elemData.Height,
+                        editTime: elemData.Edit_Time, nodes: styles, justified: rows[0].Justified, editLock: elemData.Edit_Lock,
+                        editCount: elemData.Edit_Count
+                    };
+                    let msgCont: ServerMessageContainer =
+                    {
+                        serverId: elemData.Entry_ID, userId: boardConnData.userId, type: MODENAME, payload: textMsg
+                    };
+
+                    socket.emit('NEW-ELEMENT', msgCont);
+                    connection.release();
+                });
             });
-            */
+
         }
 
-        /** Handle receiving a new element of this component type.
+        /** Handle receiving a new element of this component type, checking that the recieved element data is of the right type.
          *
-         *  @param {UserNewCurveMessage} message - The message containing the element data.
+         *  @param {UserNewTextMessage} message - The message containing the element data.
+         *  @param {number} id - The ID for the element.
          *  @param {SocketIO.Socket} socket - The socket for this connection.
          *  @param {SQLConnection} connection - The SQL connection to query against.
          *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         *  @param {MySql.Pool} my_sql_pool - The mySQL connection pool to get a mySQL connection.
          */
-        public handleNew(message: UserNewCurveMessage, socket: SocketIO.Socket, connection, boardConnData: BoardConnection)
+        public handleNew(message: UserNewTextMessage, id: number, socket: SocketIO.Socket, connection: MySql.SQLConnection,
+                         boardConnData: BoardConnection, my_sql_pool: MySql.Pool)
         {
-            console.log('BOARD: Received curve.');
-            if(typeof(message.localId) != 'undefined' && boardConnData.allowUserEdit && message.num_points && message.colour)
+            console.log('BOARD: Received element of type: ' + MODENAME);
+            if(typeCheck.number(message.size))
             {
-                connection.query('START TRANSACTION',
-                (err) =>
-                {
-                    if (!err)
-                    {
-                        this.addNew(message, socket, connection, boardConnData);
-                    }
-                    else
-                    {
-                        console.log('BOARD: Error while performing new curve query.' + err);
-                        connection.release();
-                    }
-                });
+                this.addNew(message, id, socket, connection, boardConnData, my_sql_pool);
+            }
+            else
+            {
+                return connection.rollback(() => { connection.release(); });
             }
         }
 
@@ -159,25 +347,32 @@ namespace Text {
          *  @param {SocketIO.Socket} socket - The socket for this connection.
          *  @param {SQLConnection} connection - The SQL connection to query against.
          *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         *  @param {MySql.Pool} my_sql_pool - The mySQL connection pool to get a mySQL connection.
          */
-        public handleMessage(message: UserMessage, serverId: number, socket: SocketIO.Socket, connection, boardConnData: BoardConnection)
+        public handleElementMessage(message: UserMessage, serverId: number, socket: SocketIO.Socket, connection: MySql.SQLConnection,
+                                    boardConnData: BoardConnection, my_sql_pool: MySql.Pool)
         {
             let type = message.header;
 
             switch(type)
             {
-                case MessageTypes.POINT:
-                    this.handlePointMessage(message.payload as UserNewPointMessage, serverId, socket, connection, boardConnData);
+                case MessageTypes.NODE:
+                    this.handleNodeMessage(message.payload as UserNodeMessage, serverId, socket, connection, boardConnData);
                     break;
-                case MessageTypes.DELETE:
-                    this.handleDeleteMessage(serverId, socket, connection, boardConnData);
-                case MessageTypes.RESTORE:
-                    this.handleRestoreMessage(serverId, socket, connection, boardConnData);
-                case MessageTypes.MOVE:
-                    this.handleMoveMessage(message.payload as UserMoveElementMessage,serverId, socket, connection, boardConnData);
-                case MessageTypes.MISSINGPOINT:
-                    this.handleMissingMessage(message.payload as UserMissingPointMessage,serverId, socket, connection, boardConnData);
+                case MessageTypes.MISSED:
+                    this.handleMissingMessage(message.payload as UserMissingNodeMessage, serverId, socket, connection, boardConnData);
+                case MessageTypes.EDIT:
+                    this.handleEditMessage(message.payload as UserEditMessage, serverId, socket, connection, my_sql_pool, boardConnData);
+                    break;
+                case MessageTypes.JUSTIFY:
+                    this.handleJustifyMessage(message.payload as UserJustifyMessage, serverId, socket, connection, boardConnData);
+                    break;
+                case MessageTypes.SIZECHANGE:
+                    this.handleSizeMessage(message.payload as UserChangeSizeMessage, serverId, socket, connection, boardConnData);
+                    break;
                 default:
+                    console.log('Unknown message type recieved.');
+                    connection.release();
                     break;
             }
         }
@@ -192,995 +387,561 @@ namespace Text {
          */
         public handleUnknownMessage(serverId: number, socket: SocketIO.Socket, connection, boardConnData: BoardConnection)
         {
+            /* TODO: Remove debugging code. */
+            console.log('Recieved UNKNOWN message for element: ' + serverId);
 
+            let self = this;
             // Send client curve data if available, client may then request missing points.
-            connection.query('SELECT * FROM Whiteboard_Space WHERE Entry_ID = ? AND Room_ID = ?', [serverId, boardConnData[socket.id].roomId],
-            (err, rows, fields) =>
+            connection.query('SELECT * FROM Whiteboard_Space WHERE Entry_ID = ? AND Room_ID = ?', [serverId, boardConnData.roomId],
+            (err, rows: Array<ComponentBase.SQLElementData>, fields) =>
             {
                 if (err)
                 {
-                    console.log('BOARD: Error while performing curve query.' + err);
+                    console.log('BOARD: Error while performing text query.' + err);
+                    connection.release();
+                    return;
                 }
-                else
-                {
-                    if(rows[0])
-                    {
-                        let curveMsg : ServerNewCurvePayload = {
-                            header: null, payload: null, userId: rows[0].User_ID as number, num_points: rows[0].Num_Control_Points as number,
-                            colour: rows[0].Colour as string, size: rows[0].Size as number, x: rows[0].X_Loc, y: rows[0].Y_Loc,
-                            width: rows[0].Width, height: rows[0].Height, editTime: rows[0].Edit_Time
-                        };
 
+                if(rows == undefined || rows == null || rows[0] == undefined || rows[0] == null)
+                {
+                    console.log('Element not found.');
+                    connection.release();
+                    return;
+                }
+
+
+                let elemData = rows[0];
+                connection.query('SELECT * FROM Text_Space WHERE Entry_ID = ?', [elemData.Entry_ID], (err, rows: Array<SQLTextData>, fields) =>
+                {
+                    if (err)
+                    {
+                        console.log('BOARD: Error while performing text query.' + err);
+                        connection.release();
+                        return;
+                    }
+
+                    if(rows == undefined || rows == null || rows[0] == undefined || rows[0] == null)
+                    {
+                        connection.release();
+                        return;
+                    }
+
+                    connection.query('SELECT * FROM Text_Style_Node WHERE Entry_ID = ?',
+                    [elemData.Entry_ID],
+                    (err, prows: Array<SQLNodeData>, pfields) =>
+                    {
+                        if (err)
+                        {
+                            console.log('BOARD: Error while performing existing style node query. ' + err);
+                            connection.release();
+                            return;
+                        }
+
+                        let styles: Array<NodeContainer> = [];
+
+                        for(let i = 0; i < prows.length; i++)
+                        {
+                            let nodeCont: NodeContainer =
+                            {
+                                seq_num: prows[i].Seq_Num, start: prows[i].Start, end: prows[i].End, text: prows[i].Text_Data,
+                                weight: prows[i].Weight, colour: prows[i].Colour, style: prows[i].Style, oline: prows[i].isOverline,
+                                uline: prows[i].isUnderline, tline: prows[i].isThroughline
+                            };
+
+                            styles.push(nodeCont);
+                        }
+
+                        let textMsg: ServerNewTextPayload = {
+                            header: null, payload: null, num_styles: rows[0].Num_Style_Nodes, userId: elemData.User_ID,
+                            size: rows[0].Size, x: elemData.X_Loc, y: elemData.Y_Loc, width: elemData.Width, height: elemData.Height,
+                            editTime: elemData.Edit_Time, nodes: styles, justified: rows[0].Justified, editLock: elemData.Edit_Lock,
+                            editCount: elemData.Edit_Count
+                        };
                         let msgCont: ServerMessageContainer =
                         {
-                            serverId: serverId, userId: boardConnData.userId, type: MODENAME, payload: curveMsg
+                            serverId: elemData.Entry_ID, userId: boardConnData.userId, type: MODENAME, payload: textMsg
                         };
 
-                        let self = this;
-                        socket.broadcast.to(boardConnData.roomId.toString()).emit('NEW-ELEMENT', msgCont);
-                    }
-                }
-                connection.release();
-            });
+                        socket.emit('NEW-ELEMENT', msgCont);
 
+                        connection.release();
+                    });
+                });
+            });
+        }
+
+        /** Handle any necessary data handling on a user disconnect (connection need not be cleaned yet, will wait 5 sec for reconnection.
+         *
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
+        public handleDisconnect(boardConnData: BoardConnection, my_sql_pool: MySql.Pool)
+        {
+            let userData = this.componentData[boardConnData.userId];
+
+            for(let i = 0; i < userData.incompleteEdits.length; i++)
+            {
+                let edit = userData.edits[userData.incompleteEdits[i].textId][userData.incompleteEdits[i].editId];
+
+                /* TODO: Remove debugging code. */
+                console.log('Cleared interval after disconnect.');
+                // Stop requesting missing points while disconnected
+                clearInterval(edit.nodeTimeout);
+            }
+        }
+
+        /** Handle any necessary data handling on a user reconnect (connection has not been cleaned).
+         *
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         */
+        public handleReconnect(boardConnData: BoardConnection, socket: SocketIO.Socket, my_sql_pool: MySql.Pool)
+        {
+            let userData = this.componentData[boardConnData.userId];
+            let self = this;
+
+            for(let i = 0; i < userData.incompleteEdits.length; i++)
+            {
+                let edit = userData.edits[userData.incompleteEdits[i].textId][userData.incompleteEdits[i].editId];
+
+                /* TODO: Remove debugging code. */
+                console.log('Re-added timeout after reconnect.');
+                // Re-establish the timeouts upon reconnection.
+                edit.nodeTimeout = setInterval((id) => { self.missedNodes(userData.incompleteEdits[i].textId, userData.incompleteEdits[i].editId, socket, my_sql_pool, boardConnData); }, 1000, edit);
+            }
         }
 
         /** Handle any necessary data cleanup for lost or ended user connection.
          *
-         *  @param {SocketIO.Socket} socket - The socket for this connection.
-         *  @param {SQLConnection} connection - The SQL connection to query against.
          *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {MySql.Pool} my_sql_pool - The mySQL connection pool to get a mySQL connection.
          */
-        public handleClean(socket: SocketIO.Socket, connection, boardConnData: BoardConnection)
+        public handleClean(boardConnData: BoardConnection, socket: SocketIO.Socket, my_sql_pool: MySql.Pool)
         {
-            my_sql_pool.getConnection((err, connection) =>
-            {
-                if(!err)
-                {
-                    connection.query('USE Online_Comms',
-                    (err) =>
-                    {
-                        if (err)
-                        {
-                            console.log('BOARD: Error while setting database schema. ' + err);
-                            connection.release();
-                        }
-                        else
-                        {
-                            connection.query('UPDATE Text_Space SET Edit_Lock = 0 WHERE Edit_Lock = ?', [boardConnData[socketID].userId], (err, rows, fields) =>
-                            {
-                                if(err)
-                                {
-                                    console.log('BOARD: Error cleaning connection. ERROR: ' + err);
-                                }
+            super.handleClean(boardConnData, socket, my_sql_pool);
 
-                                connection.release();
-                            });
-                        }
-                    });
-                }
-                else
+            let userData = this.componentData[boardConnData.userId];
+
+            for(let i = 0; i < userData.incompleteEdits.length; i++)
+            {
+                let edit = userData.edits[userData.incompleteEdits[i].textId][userData.incompleteEdits[i].editId];
+
+                /* TODO: Remove debugging code. */
+                console.log('Cleared interval after disconnect.');
+                // Stop requesting missing points while disconnected
+                clearInterval(edit.nodeTimeout);
+            }
+
+            userData.incompleteEdits = [];
+        }
+
+        private addNew(message: UserNewTextMessage, id: number, socket: SocketIO.Socket, connection, boardConnData: BoardConnection, my_sql_pool)
+        {
+            let userMessage;
+            let broadcastMessage;
+            let userData = this.componentData[boardConnData.userId];
+            let self = this;
+
+            userData.edits[id] = [];
+            userData.editCounts[id] = 0;
+
+            connection.query('INSERT INTO ' +
+            'Text_Space(Entry_ID, Num_Style_Nodes, Size, Justified) VALUES(?, ?, ?, ?)',
+            [id, 0, message.size, message.justified],
+            (err) =>
+            {
+                if (err)
                 {
-                    console.log('BOARD: Error getting connection to clean connection. ERROR: ' + err);
+                    console.log('BOARD: Error while performing new text query.' + err);
+                    this.dropElement(id, socket, my_sql_pool, boardConnData);
+                    return connection.rollback(() => { console.error(err); connection.release(); });
                 }
+
+                connection.commit((err) =>
+                {
+                    if(err)
+                    {
+                        console.log('BOARD: Error while performing new curve query.' + err);
+                        this.dropElement(id, socket, my_sql_pool, boardConnData);
+                        return connection.rollback(() => { console.error(err); connection.release(); });
+                    }
+
+                    let idMsg : ServerIdMessage = { serverId: id, localId: message.localId };
+                    // Tell the user the ID to assign points to.
+                    socket.emit('ELEMENT-ID', idMsg);
+
+                    console.log('BOARD: Sending text ID: ' + id);
+
+                    let textMsg: ServerNewTextPayload = {
+                        header: null, payload: null, num_styles: 0, userId: boardConnData.userId,
+                        size: message.size, x: message.x, y: message.y, width: message.width, height: message.height,
+                        editTime: new Date(), nodes: null, justified: message.justified, editLock: boardConnData.userId,
+                        editCount: 0
+                    };
+                    let msgCont: ServerMessageContainer =
+                    {
+                        serverId: id, userId: boardConnData.userId, type: MODENAME, payload: textMsg
+                    };
+
+                    socket.emit('NEW-ELEMENT', msgCont);
+                    connection.release();
+                });
             });
         }
 
-        /* Textbox listeners.
-         *
-         *
-         *
-         */
-        socket.on('TEXTBOX', function(data : UserNewTextMessage)
+        private handleSizeMessage(message: UserChangeSizeMessage, serverId: number, socket: SocketIO.Socket, connection, boardConnData: BoardConnection)
         {
-            if(boardConnData[socket.id].isConnected)
+            connection.query('UPDATE Text_Space SET Size = ? WHERE Entry_ID = ?', [message.newSize, serverId], function(err, rows, fields)
             {
-                my_sql_pool.getConnection(function(err, connection)
+                if (err)
                 {
-                    if(!err)
-                    {
-                        if(typeof(data.localId) != 'undefined')
-                        {
-                            connection.query('USE Online_Comms');
-                            connection.query('INSERT INTO Text_Space(Room_ID, User_ID, Local_ID, Edit_Time, Num_Style_Nodes, Size, Pos_X, Pos_Y, Width, Height, Edit_Lock, Justified) VALUES(?, ?, ?, CURRENT_TIMESTAMP, 0, ?, ?, ?, ?, ?, ?, ?)',
-                            [boardConnData[socket.id].roomId, boardConnData[socket.id].userId, data.localId, data.size, data.x, data.y, data.width, data.height, boardConnData[socket.id].userId, data.justified],
-                            function(err, result)
-                            {
-                                if (err)
-                                {
-                                    console.log('BOARD: Error while performing new textbox query.' + err);
-                                }
-                                else
-                                {
-                                    var idMsg : ServerTextIdMessage = {serverId: result.insertId, localId: data.localId};
-                                    // Tell the user the ID to assign points to.
-                                    socket.emit('TEXTID', idMsg);
+                    console.log('BOARD: Error while updating textbox size. ' + err);
+                    connection.release();
+                    return;
+                }
 
-                                    var textMsg : ServerNewTextboxMessage = {
-                                        serverId: result.insertId, userId: boardConnData[socket.id].userId, editLock: boardConnData[socket.id].userId,
-                                        x: data.x, y: data.y, width: data.width, height: data.height, size: data.size, justified: data.justified, editCount: 0,
-                                        editTime: new Date()
-                                    };
-                                    socket.broadcast.to(boardConnData[socket.id].roomId.toString()).emit('TEXTBOX', textMsg);
-                                }
-                            });
-                        }
-                        else
+                /* TODO: This message sending stuff should really be in its own function, i.e. emit() and broadcast() */
+                let payload: ServerChangeSizeMessage = { newSize: message.newSize };
+                let sizeMsg : ServerMessage = { header: MessageTypes.SIZECHANGE, payload: payload };
+                let sizeCont: ServerMessageContainer =
+                {
+                    serverId: serverId, userId: boardConnData.userId, type: MODENAME, payload: sizeMsg
+                };
+                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', sizeCont);
+
+                connection.release();
+            });
+        }
+
+        private handleEditMessage(message: UserEditMessage, serverId: number, socket: SocketIO.Socket, connection, my_sql_pool, boardConnData: BoardConnection)
+        {
+            let missingNodes = [];
+            let numOK = 0;
+            let received = [];
+            let cleanNodes = [];
+
+            let userData = this.componentData[boardConnData.userId];
+
+            let self = this;
+            if(userData.edits[serverId] != null && userData.edits[serverId] != undefined)
+            {
+                if(typeCheck.integer(message.num_styles) && typeCheck.integer(message.bufferId))
+                {
+                    let editData: EditData =
+                    {
+                        textId: serverId, numNodes: message.num_styles, recievedNodes: [], cleanedNodes: [], nodeRetries: 0, nodeTimeout: null, numRecieved: 0,
+                        localId: message.bufferId
+                    };
+
+                    let editId = ++userData.editCounts[serverId];
+                    userData.edits[serverId][editId] = editData;
+
+                    for(let i = 0; i < message.nodes.length; i++)
+                    {
+                        if(typeCheck.integer(message.nodes[i].seq_num) && typeCheck.string(message.nodes[i].colour)
+                            && typeCheck.string(message.nodes[i].text) && typeCheck.boolean(message.nodes[i].uline)
+                            && typeCheck.boolean(message.nodes[i].oline) && typeCheck.boolean(message.nodes[i].tline)
+                            && typeCheck.string(message.nodes[i].weight) && typeCheck.string(message.nodes[i].style))
                         {
-                            console.log('Uh Oh, some malformed data appeared.');
+                            if(message.nodes[i].seq_num >= 0 && message.nodes[i].seq_num < message.num_styles)
+                            {
+                                numOK++;
+                                received[message.nodes[i].seq_num] = true;
+                                cleanNodes[message.nodes[i].seq_num] = message.nodes[i];
+                            }
                         }
+                    }
+
+                    editData.cleanedNodes = cleanNodes.slice();
+
+                    if(cleanNodes.length < message.num_styles)
+                    {
+                        // Set a 0.5 sec timeout to inform the client of missing points.
+                        editData.nodeTimeout = setInterval(self.missedNodes.bind(self), 500, serverId, editId, socket, my_sql_pool, boardConnData);
+                        editData.numRecieved = numOK;
+                        editData.recievedNodes = received.slice();
+                        userData.incompleteEdits.push({ textId: serverId, editId: editId });
                     }
                     else
                     {
-                        console.log('BOARD: Error while getting database connection to add new textbox. ' + err);
+                        this.comleteEdit(serverId, editId, socket, connection, boardConnData);
                     }
-                    connection.release();
-                });
-            }
-        });
-
-
-        socket.on('EDIT-TEXT', function(data: UserEditTextMessage)
-        {
-            // TODO: Need to check for lock
-            if(boardConnData[socket.id].isConnected)
-            {
-                boardConnData[socket.id].editIds[boardConnData[socket.id].editCount] = {textId: data.serverId, localId: data.localId};
-                boardConnData[socket.id].recievedNodes[boardConnData[socket.id].editCount] = [];
-                boardConnData[socket.id].numNodes[boardConnData[socket.id].editCount] = data.num_nodes;
-                boardConnData[socket.id].nodeRetries[boardConnData[socket.id].editCount] = 0;
-
-                var idMsg : ServerEditIdMessage = {editId: boardConnData[socket.id].editCount, bufferId: data.bufferId, localId: data.localId};
-                socket.emit('EDITID-TEXT', idMsg);
-
-                var editMsg : ServerEditTextMessage = {
-                    serverId: data.serverId, userId: boardConnData[socket.id].userId, editId: boardConnData[socket.id].editCount, num_nodes: data.num_nodes,
-                    editTime: new Date()
-                };
-                socket.to(boardConnData[socket.id].roomId.toString()).emit('EDIT-TEXT', editMsg);
-
-
-                // Set a 1 min timeout to inform the client of missing edit data.
-                boardConnData[socket.id].textTimeouts[boardConnData[socket.id].editCount] = (function(textId, editId)
+                }
+                else
                 {
-                    setTimeout(function() { missedText(textId, editId, socket); }, 60000);
-                })(data.serverId, boardConnData[socket.id].editCount);
-
-                boardConnData[socket.id].editCount++;
+                    // DROP EDIT
+                    let dropPayload: ServerDroppedMessage = { editId: null, bufferId: message.bufferId};
+                    let droppedMsg : ServerMessage = { header: MessageTypes.DROPPED, payload: dropPayload };
+                    let droppedCont: ServerMessageContainer =
+                    {
+                        serverId: serverId, userId: boardConnData.userId, type: MODENAME, payload: droppedMsg
+                    };
+                    socket.emit('MSG-COMPONENT', droppedCont);
+                }
             }
-        });
+        }
+
+        private comleteEdit(serverId: number, editId: number, socket: SocketIO.Socket, connection, boardConnData: BoardConnection)
+        {
+            let userData: ComponentData = this.componentData[boardConnData.userId];
+            let editData: EditData = userData.edits[serverId][editId];
+            let nodeInserts = [];
+
+            for(let i = 0; i < editData.numNodes; i++)
+            {
+                let node = editData.cleanedNodes[i];
+                let insertData = [
+                    serverId, node.seq_num, node.colour, node.oline, node.uline, node.tline, node.weight, node.style, node.start, node.end, node.text
+                ];
+                nodeInserts.push(insertData);
+            }
+
+            clearTimeout(userData.edits[serverId][editId].nodeTimeout);
+
+            console.log("Completing text edit...");
+
+            connection.query('DELETE FROM Text_Style_Node WHERE Entry_ID = ?', [serverId],
+            function(err, rows, fields)
+            {
+                if (err)
+                {
+                    console.log('BOARD: Error while performing remove old nodes query. ' + err);
+                    return connection.rollback(() => { console.error(err); connection.release(); });
+                }
+
+                connection.query(
+                'INSERT INTO Text_Style_Node(Entry_ID, Seq_Num, Colour, isOverline, isUnderline, isThroughline, Weight, Style, Start, End, Text_Data) VALUES ?',
+                [nodeInserts],
+                (err) =>
+                {
+                    if (err)
+                    {
+                        console.log('BOARD: Error while performing style node query. ' + err);
+
+                        let dropPayload: ServerDroppedMessage = { editId: null, bufferId: editData.localId };
+                        let droppedMsg : ServerMessage = { header: MessageTypes.DROPPED, payload: dropPayload };
+                        let droppedCont: ServerMessageContainer =
+                        {
+                            serverId: serverId, userId: boardConnData.userId, type: MODENAME, payload: droppedMsg
+                        };
+                        socket.emit('MSG-COMPONENT', droppedCont);
+
+                        return connection.rollback(() => { console.error(err); connection.release(); });
+                    }
+
+                    console.log("Committing text edit...");
+                    connection.commit((err) =>
+                    {
+                        if(err)
+                        {
+                            console.log('BOARD: Error while performing style node query. ' + err);
+
+                            let dropPayload: ServerDroppedMessage = { editId: null, bufferId: editData.localId };
+                            let droppedMsg : ServerMessage = { header: MessageTypes.DROPPED, payload: dropPayload };
+                            let droppedCont: ServerMessageContainer =
+                            {
+                                serverId: serverId, userId: boardConnData.userId, type: MODENAME, payload: droppedMsg
+                            };
+                            socket.emit('MSG-COMPONENT', droppedCont);
+
+                            return connection.rollback(() => { console.error(err); connection.release(); });
+                        }
+
+                        let editPayload: ServerEditMessage =
+                        {
+                            userId: boardConnData.userId, num_styles: editData.numNodes, editId: editId,
+                            styles: editData.cleanedNodes, editTime: new Date()
+                        };
+                        let editMsg: ServerMessage =
+                        {
+                            header: MessageTypes.EDIT, payload: editPayload
+                        };
+
+                        let msgCont: ServerMessageContainer =
+                        {
+                            serverId: serverId, userId: boardConnData.userId, type: MODENAME, payload: editMsg
+                        };
+
+                        socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
+                        connection.release();
+                    });
+                });
+            });
+        }
 
         //Listens for points as part of a curve, must recive a funn let from the initiation.
-        socket.on('STYLENODE', function(data : UserStyleNodeMessage)
+        private handleNodeMessage(message: UserNodeMessage, serverId: number, socket: SocketIO.Socket, connection: MySql.SQLConnection, boardConnData: BoardConnection)
         {
-            if(boardConnData[socket.id].isConnected)
+            let userData: ComponentData = this.componentData[boardConnData.userId];
+
+            if(userData.edits[serverId] != null && userData.edits[serverId] != undefined)
             {
-                if(!boardConnData[socket.id].recievedNodes[data.editId])
+                let editData: EditData = userData.edits[serverId][message.editId];
+
+                if(typeCheck.integer(message.node.seq_num) && typeCheck.string(message.node.colour) && typeCheck.string(message.node.text) &&
+                   typeCheck.boolean(message.node.uline) && typeCheck.boolean(message.node.oline) && typeCheck.boolean(message.node.tline) &&
+                   typeCheck.string(message.node.weight) && typeCheck.string(message.node.style && editData != null && editData != undefined))
                 {
-                    console.error('Bad data. Socket ID: ' + socket.id + ' EditID: ' + data.editId);
-                }
-
-                var newNode : TextStyle = {
-                    start: data.start, end: data.end, text: data.text, num: data.num, weight: data.weight, decoration: data.decoration, style: data.style,
-                    colour: data.colour
-                };
-                boardConnData[socket.id].recievedNodes[data.editId].push(newNode);
-
-                if(boardConnData[socket.id].recievedNodes[data.editId].length == boardConnData[socket.id].numNodes[data.editId])
-                {
-                    comleteEdit(data.editId, socket);
-                }
-            }
-        });
-
-        socket.on('JUSTIFY-TEXT', function(data : UserJustifyTextMessage)
-        {
-            if(boardConnData[socket.id].isConnected)
-            {
-                my_sql_pool.getConnection(function(err, connection)
-                {
-                    if(!err)
+                    if(message.node.seq_num >= 0 && message.node.seq_num < editData.numNodes && !editData.recievedNodes[message.node.seq_num])
                     {
-                        connection.query('USE Online_Comms');
-                        connection.query('SELECT Edit_Lock FROM Text_Space WHERE Entry_ID = ?', [data.serverId], function(err, rows, fields)
-                        {
-                            if (err)
-                            {
-                                console.log('BOARD: Error getting textbox justify state. ' + err);
-                                connection.release();
-                            }
-                            else
-                            {
-                                if(rows[0].Edit_Lock == boardConnData[socket.id].userId)
-                                {
-                                    connection.query('UPDATE Text_Space SET Justified = ? WHERE Entry_ID = ?', [data.newState, data.serverId], function(err, rows, fields)
-                                    {
-                                        if (err)
-                                        {
-                                            console.log('BOARD: Error while updating textbox justify state. ' + err);
-                                        }
-                                        else
-                                        {
-                                            var msg: ServerJustifyTextMessage = {serverId: data.serverId, newState: data.newState};
-                                            socket.to(boardConnData[socket.id].roomId.toString()).emit('JUSTIFY-TEXT', msg);
-                                        }
-                                        connection.release();
-                                    });
-                                }
-                            }
-                        });
-                    }
-                    else
-                    {
-                        console.log('BOARD: Error while getting database connection to change textbox justify state. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-        });
+                        editData.numRecieved++;
+                        editData.recievedNodes[message.node.seq_num] = true;
+                        editData.cleanedNodes[message.node.seq_num] = message.node;
 
-        socket.on('LOCK-TEXT', function(data : UserLockTextMessage)
-        {
-            if(boardConnData[socket.id].isConnected)
-            {
-                if(boardConnData[socket.id].isHost)
-                {
-                    my_sql_pool.getConnection(function(err, connection)
-                    {
-                        if(!err)
+                        if(editData.numRecieved == editData.numNodes)
                         {
-                            connection.query('USE Online_Comms');
-                            connection.query('SELECT Edit_Lock FROM Text_Space WHERE Entry_ID = ?', [data.serverId], function(err, rows, fields)
-                            {
-                                if (err)
-                                {
-                                    console.log('BOARD: Error getting textbox lock state. ' + err);
-                                    connection.release();
-                                }
-                                else
-                                {
-                                    if(!rows[0].Edit_Lock)
-                                    {
-                                        connection.query('UPDATE Text_Space SET Edit_Lock = ? WHERE Entry_ID = ?', [boardConnData[socket.id].userId, data.serverId], function(err, rows, fields)
-                                        {
-                                            if (err)
-                                            {
-                                                console.log('BOARD: Error while updating textbox loxk state. ' + err);
-                                            }
-                                            else
-                                            {
-                                                var idMsg : ServerLockIdMessage = {serverId: data.serverId};
-                                                socket.emit('LOCKID-TEXT', idMsg);
-                                                var lockMsg : ServerLockTextMessage = {serverId: data.serverId, userId: boardConnData[socket.id].userId};
-                                                socket.to(boardConnData[socket.id].roomId.toString()).emit('LOCK-TEXT', lockMsg);
-                                            }
-                                            connection.release();
-                                        });
-                                    }
-                                    else
-                                    {
-                                        var refMsg : ServerRefusedTextMessage = {serverId: data.serverId};
-                                        socket.emit('REFUSED-TEXT', refMsg);
-                                        connection.release();
-                                    }
-                                }
-                            });
-                        }
-                        else
-                        {
-                            console.log('BOARD: Error while getting database connection to edit style node. ' + err);
-                            connection.release();
-                        }
-                    });
-                }
-                else
-                {
-                    my_sql_pool.getConnection(function(err, connection)
-                    {
-                        if(!err)
-                        {
-                            connection.query('USE Online_Comms');
-                            connection.query('SELECT User_ID FROM Text_Space WHERE Entry_ID = ? AND User_ID = ?', [data.serverId, boardConnData[socket.id].userId], function(err, rows)
-                            {
-                                if (!err)
-                                {
-                                    if(rows[0])
-                                    {
-                                        connection.query('SELECT Edit_Lock FROM Text_Space WHERE Entry_ID = ?', [data.serverId], function(err, rows, fields)
-                                        {
-                                            if (err)
-                                            {
-                                                console.log('BOARD: Error getting textbox lock state. ' + err);
-                                                connection.release();
-                                            }
-                                            else
-                                            {
-                                                if(!rows[0].Edit_Lock)
-                                                {
-                                                    connection.query('UPDATE Text_Space SET Edit_Lock = ? WHERE Entry_ID = ?', [boardConnData[socket.id].userId, data.serverId], function(err, rows, fields)
-                                                    {
-                                                        if (err)
-                                                        {
-                                                            console.log('BOARD: Error while updating textbox loxk state. ' + err);
-                                                        }
-                                                        else
-                                                        {
-                                                            var idMsg : ServerLockIdMessage = {serverId: data.serverId};
-                                                            socket.emit('LOCKID-TEXT', idMsg);
-                                                            var lockMsg : ServerLockTextMessage = {serverId: data.serverId, userId: boardConnData[socket.id].userId};
-                                                            socket.to(boardConnData[socket.id].roomId.toString()).emit('LOCK-TEXT', lockMsg);
-                                                        }
-                                                        connection.release();
-                                                    });
-                                                }
-                                                else
-                                                {
-                                                    var refMsg : ServerRefusedTextMessage = {serverId: data.serverId};
-                                                    socket.emit('REFUSED-TEXT', refMsg);
-                                                    connection.release();
-                                                }
-                                            }
-                                        });
-                                    }
-                                }
-                                else
-                                {
-                                    console.log('BOARD: Error while performing textLock:findUser query. ' + err);
-                                    connection.release();
-                                }
-                            });
-                        }
-                        else
-                        {
-                            console.log('BOARD: Error while getting database connection to lock text. ' + err);
-                            connection.release();
-                        }
-                    });
-                }
-            }
-        });
-
-
-        socket.on('RELEASE-TEXT', function(data : UserReleaseTextMessage)
-        {
-            console.log('Received release for: ' + data.serverId);
-            if(boardConnData[socket.id].isConnected)
-            {
-                my_sql_pool.getConnection(function(err, connection)
-                {
-                    if(!err)
-                    {
-                        connection.query('USE Online_Comms');
-                        connection.query('SELECT Edit_Lock FROM Text_Space WHERE Entry_ID = ?', [data.serverId], function(err, rows, fields)
-                        {
-                            if (err)
-                            {
-                                console.log('BOARD: Error releasing textbox lock state. ' + err);
-                                connection.release();
-                            }
-                            else
-                            {
-                                if(!rows[0])
-                                {
-                                    console.log('No row. Data ID: ' + data.serverId);
-                                    connection.release();
-                                }
-                                else if(rows[0].Edit_Lock == boardConnData[socket.id].userId)
-                                {
-                                    connection.query('UPDATE Text_Space SET Edit_Lock = 0 WHERE Entry_ID = ?', [data.serverId], function(err, rows, fields)
-                                    {
-                                        if (err)
-                                        {
-                                            console.log('BOARD: Error while updating textbox lock state. ' + err);
-                                        }
-                                        else
-                                        {
-                                            var msg : ServerReleaseTextMessage = {serverId: data.serverId};
-                                            socket.to(boardConnData[socket.id].roomId.toString()).emit('RELEASE-TEXT', msg);
-                                        }
-                                        connection.release();
-                                    });
-                                }
-                                else
-                                {
-                                    connection.release();
-                                }
-                            }
-                        });
-                    }
-                    else
-                    {
-                        console.log('BOARD: Error while getting database connection to release text lock. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-        });
-
-
-        socket.on('MOVE-TEXT', function(data : UserMoveElementMessage)
-        {
-            if(boardConnData[socket.id].isConnected)
-            {
-                console.log('Received Move Text Event.');
-                if(boardConnData[socket.id].isHost)
-                {
-                    my_sql_pool.getConnection(function(err, connection)
-                    {
-                        if(!err)
-                        {
-                            connection.query('USE Online_Comms');
-                            connection.query('UPDATE Text_Space SET Pos_X = ?, Pos_Y = ?, Edit_Time = CURRENT_TIMESTAMP WHERE Entry_ID = ?', [data.x, data.y, data.serverId], function(err, rows)
-                            {
-                                if (!err)
-                                {
-                                    var msg: ServerMoveElementMessage = { serverId: data.serverId, x: data.x, y:data.y, editTime: new Date() };
-                                    socket.to(boardConnData[socket.id].roomId.toString()).emit('MOVE-TEXT', msg);
-                                }
-                                else
-                                {
-                                    console.log('BOARD: Error while performing move text query. ' + err);
-                                }
-                                connection.release();
-                            });
-                        }
-                        else
-                        {
-                            console.log('BOARD: Error while getting database connection to move text. ' + err);
-                            connection.release();
-                        }
-                    });
-                }
-                else
-                {
-                    my_sql_pool.getConnection(function(err, connection)
-                    {
-                        if(!err)
-                        {
-                            connection.query('USE Online_Comms');
-                            connection.query('SELECT User_ID FROM Text_Space WHERE Entry_ID = ? AND User_ID = ?', [data.serverId, boardConnData[socket.id].userId], function(err, rows)
-                            {
-                                if (!err)
-                                {
-                                    if(rows[0])
-                                    {
-                                        connection.query('UPDATE Text_Space SET Pos_X = ?, Pos_Y = ?, Edit_Time = CURRENT_TIMESTAMP WHERE Entry_ID = ?', [data.x, data.y, data.serverId], function(err, rows)
-                                        {
-                                            if (!err)
-                                            {
-                                                var msg: ServerMoveElementMessage = { serverId: data.serverId, x: data.x, y:data.y, editTime: new Date() };
-                                                socket.to(boardConnData[socket.id].roomId.toString()).emit('MOVE-TEXT', msg);
-                                            }
-                                            else
-                                            {
-                                                console.log('BOARD: Error while performing move text query. ' + err);
-                                            }
-                                            connection.release();
-                                        });
-                                    }
-                                }
-                                else
-                                {
-                                    console.log('BOARD: Error while performing move text:findUser query. ' + err);
-                                    connection.release();
-                                }
-                            });
-                        }
-                        else
-                        {
-                            console.log('BOARD: Error while getting database connection to move text. ' + err);
-                            connection.release();
-                        }
-                    });
-                }
-            }
-        });
-
-
-        socket.on('RESIZE-TEXT', function(data: UserResizeTextMessage)
-        {
-            if(boardConnData[socket.id].isConnected)
-            {
-                console.log('Received Resize Text Event.');
-                if(boardConnData[socket.id].isHost)
-                {
-                    my_sql_pool.getConnection(function(err, connection)
-                    {
-                        if(!err)
-                        {
-                            connection.query('USE Online_Comms');
-                            connection.query('UPDATE Text_Space SET Width = ?, Height = ?, Edit_Time = CURRENT_TIMESTAMP WHERE Entry_ID = ?', [data.width, data.height, data.serverId], function(err, rows)
-                            {
-                                if (!err)
-                                {
-                                    var msg: ServerResizeTextMessage = { serverId: data.serverId, width: data.width, height: data.height, editTime: new Date() };
-                                    socket.to(boardConnData[socket.id].roomId.toString()).emit('RESIZE-TEXT', msg);
-                                }
-                                else
-                                {
-                                    console.log('BOARD: Error while performing resize text query. ' + err);
-                                }
-                                connection.release();
-                            });
-                        }
-                        else
-                        {
-                            console.log('BOARD: Error while getting database connection to resize text. ' + err);
-                            connection.release();
-                        }
-                    });
-                }
-                else
-                {
-                    my_sql_pool.getConnection(function(err, connection)
-                    {
-                        if(!err)
-                        {
-                            connection.query('USE Online_Comms');
-                            connection.query('SELECT User_ID FROM Text_Space WHERE Entry_ID = ? AND User_ID', [data.serverId, boardConnData[socket.id].userId], function(err, rows)
-                            {
-                                if (!err)
-                                {
-                                    if(rows[0])
-                                    {
-                                        connection.query('UPDATE Text_Space SET Width = ?, Height = ?, Edit_Time = CURRENT_TIMESTAMP WHERE Entry_ID = ?', [data.width, data.height, data.serverId], function(err, rows)
-                                        {
-                                            if (!err)
-                                            {
-                                                var msg: ServerResizeTextMessage = { serverId: data.serverId, width: data.width, height: data.height, editTime: new Date() };
-                                                socket.to(boardConnData[socket.id].roomId.toString()).emit('RESIZE-TEXT', msg);
-                                            }
-                                            else
-                                            {
-                                                console.log('BOARD: Error while performing resize text query. ' + err);
-                                            }
-                                            connection.release();
-                                        });
-                                    }
-                                }
-                                else
-                                {
-                                    console.log('BOARD: Error while performing resize text:findUser query. ' + err);
-                                    connection.release();
-                                }
-                            });
-                        }
-                        else
-                        {
-                            console.log('BOARD: Error while getting database connection to resize text. ' + err);
-                            connection.release();
-                        }
-                    });
-                }
-            }
-        });
-
-
-        socket.on('DELETE-TEXT', function(textId: number)
-        {
-            if(boardConnData[socket.id].isConnected)
-            {
-                console.log('Received Delete Text Event. Text ID: ' + textId);
-                if(boardConnData[socket.id].isHost)
-                {
-                    my_sql_pool.getConnection(function(err, connection)
-                    {
-                        if(!err)
-                        {
-                            connection.query('USE Online_Comms');
-                            connection.query('UPDATE Text_Space SET isDeleted = 1 WHERE Entry_ID = ?', [textId], function(err, rows)
-                            {
-                                if (!err)
-                                {
-                                    socket.to(boardConnData[socket.id].roomId.toString()).emit('DELETE-TEXT', textId);
-                                }
-                                else
-                                {
-                                    console.log('BOARD: Error while performing erase text query. ' + err);
-                                }
-                                connection.release();
-                            });
-                        }
-                        else
-                        {
-                            console.log('BOARD: Error while getting database connection to delete text. ' + err);
-                            connection.release();
-                        }
-                    });
-                }
-                else
-                {
-                    my_sql_pool.getConnection(function(err, connection)
-                    {
-                        if(!err)
-                        {
-                            connection.query('USE Online_Comms');
-                            connection.query('SELECT User_ID FROM Text_Space WHERE Entry_ID = ? AND User_ID', [textId, boardConnData[socket.id].userId], function(err, rows)
-                            {
-                                console.log('Cleared User.');
-                                if (!err)
-                                {
-                                    if(rows[0])
-                                    {
-                                        connection.query('UPDATE Text_Space SET isDeleted = 1 WHERE Entry_ID = ?', [textId], function(err, rows)
-                                        {
-                                            if (!err)
-                                            {
-                                                socket.to(boardConnData[socket.id].roomId.toString()).emit('DELETE-TEXT', textId);
-                                            }
-                                            else
-                                            {
-                                                console.log('BOARD: Error while performing erase text query. ' + err);
-                                            }
-                                            connection.release();
-                                        });
-                                    }
-                                }
-                                else
-                                {
-                                    console.log('BOARD: Error while performing erase text:findUser query. ' + err);
-                                    connection.release();
-                                }
-                            });
-                        }
-                        else
-                        {
-                            console.log('BOARD: Error while getting database connection to delete text. ' + err);
-                            connection.release();
-                        }
-                    });
-                }
-            }
-        });
-
-
-        // Listen for cliets requesting missing data.
-        socket.on('MISSING-TEXT', function(data: UserMissingTextMessage)
-        {
-            console.log('BOARD: Received missing message.');
-            if(boardConnData[socket.id].isConnected)
-            {
-                setTimeout(function() {sendMissingText(data, socket);}, 0);
-            }
-        });
-
-        // Listen for cliets recieving nodes without textbox.
-        socket.on('UNKNOWN-TEXT', function(textId: number)
-        {
-            if(boardConnData[socket.id].isConnected)
-            {
-                my_sql_pool.getConnection(function(err, connection)
-                {
-                    if(!err)
-                    {
-                        connection.query('USE Online_Comms');
-                        connection.query('SELECT * FROM Text_Space WHERE Entry_ID = ?', [textId], function(err, rows, fields)
-                        {
-                            if (err)
-                            {
-                                connection.release();
-                                console.log('BOARD: Error while performing existing text query. ' + err);
-                            }
-                            else
-                            {
-                                if(rows[0])
-                                {
-                                    var msg: ServerNewTextboxMessage = {
-                                        serverId: rows[0].Entry_ID, userId: rows[0].User_ID, size: rows[0].Size,
-                                        x: rows[0].Pos_X, y: rows[0].Pos_Y, width: rows[0].Width, height: rows[0].Height,
-                                        editLock: rows[0].Edit_Lock, justified: rows[0].isJustified, editCount: 0, editTime: rows[0].Edit_Time
-                                    }
-                                    socket.emit('TEXTBOX', msg);
-
-                                    (function(data) {setTimeout(function() {sendText(data, socket);}, 100)})(rows[0]);
-                                }
-
-                                connection.release();
-                            }
-                        });
-                    }
-                    else
-                    {
-                        console.log('BOARD: Error while getting database connection for unknown text. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-        });
-
-        // Listen for cliets recieving nodes without edit.
-        socket.on('UNKNOWN-EDIT', function(editId: number)
-        {
-            if(boardConnData[socket.id].isConnected)
-            {
-                my_sql_pool.getConnection(function(err, connection)
-                {
-                    if(!err)
-                    {
-                        connection.query('USE Online_Comms');
-                        connection.query('SELECT * FROM Text_Space WHERE Entry_ID = ?', [editId], function(err, rows, fields)
-                        {
-                            if (err)
-                            {
-                                connection.release();
-                                console.log('BOARD: Error while performing existing text query. ' + err);
-                            }
-                            else
-                            {
-                                if(rows[0])
-                                {
-                                    (function(data) {setTimeout(function() {sendText(data, socket);}, 100)})(rows[0]);
-                                }
-
-                                connection.release();
-                            }
-                        });
-                    }
-                    else
-                    {
-                        console.log('BOARD: Error while getting database connection for unknown edit. ' + err);
-                        connection.release();
-                    }
-                });
-            }
-        });
-
-        var missedText = function(textId: number, editId: number, socket: SocketIO.Socket) : void
-        {
-            for(var i = 0; i < boardConnData[socket.id].numNodes[textId]; i++)
-            {
-                if(!boardConnData[socket.id].recievedNodes[textId][i])
-                {
-                    boardConnData[socket.id].nodeRetries[textId]++;
-                    if(boardConnData[socket.id].nodeRetries[textId] > 10 || boardConnData[socket.id].cleanUp)
-                    {
-                        clearInterval(boardConnData[socket.id].textTimeouts[textId]);
-                        boardConnData[socket.id].recievedNodes[textId] = [];
-
-                        if(boardConnData[socket.id].isConnected)
-                        {
-                            // TODO:
-                            socket.emit('DROPPED-TEXT', {id: editId});
-                        }
-
-                        my_sql_pool.getConnection(function(err, connection)
-                        {
-                            if(!err)
-                            {
-                                connection.query('USE Online_Comms');
-                                connection.query('DELETE FROM Text_Style_Node WHERE Entry_ID = ?', [textId], function(err, result)
-                                {
-                                    if(!err)
-                                    {
-                                        connection.query('DELETE FROM Text_Space WHERE Entry_ID = ?', [textId], function(err, result)
-                                        {
-                                            if(err)
-                                            {
-                                                console.log('BOARD: Error while removing badly formed text. ' + err);
-                                            }
-                                            connection.release();
-                                        });
-                                    }
-                                    else
-                                    {
-                                        console.log('BOARD: Error while removing badly formed text. ' + err);
-                                        connection.release();
-                                    }
-                                });
-                            }
-                            else
-                            {
-                                connection.release();
-                                console.log('BOARD: Error while getting database connection to remove malformed text. ' + err);
-                            }
-                        });
-                        return;
-                    }
-                    else
-                    {
-                        if(boardConnData[socket.id].isConnected)
-                        {
-                            let msg: ServerMissedTextMessage = {serverId: textId, editId: editId};
-                            socket.emit('MISSED-TEXT', msg);
+                            this.comleteEdit(serverId, message.editId, socket, connection, boardConnData);
                         }
                     }
                 }
             }
-        };
-
-        var sendMissingText = function(data: UserMissingTextMessage, socket: SocketIO.Socket) : void
-        {
-            my_sql_pool.getConnection(function(err, connection)
-            {
-                if(!err)
-                {
-                    console.log('BOARD: Looking for Text ID: ' + data.serverId + ' sequence number: ' + data.seq_num);
-                    connection.query('USE Online_Comms');
-                    connection.query('SELECT Entry_ID FROM Text_Space WHERE Entry_ID = ? ', [data.serverId],  function(err, rows, fields)
-                    {
-                        if (err)
-                        {
-                            console.log('BOARD: Error while performing text node query.' + err);
-                        }
-                        else
-                        {
-                            if(rows[0])
-                            {
-                                connection.query('SELECT * FROM Text_Style_Node WHERE Entry_ID = ? AND Seq_Num = ?', [data.serverId, data.seq_num],  function(err, rows, fields)
-                                {
-                                    if (err)
-                                    {
-                                        console.log('BOARD: Error while performing text node query.' + err);
-                                    }
-                                    else
-                                    {
-                                        if(rows[0])
-                                        {
-                                            sendStyle(rows[0], data.serverId, socket);
-                                        }
-                                    }
-                                });
-                            }
-                            else
-                            {
-                                socket.emit('IGNORE-TEXT', data.serverId);
-                            }
-                        }
-                        connection.release();
-                    });
-                }
-                else
-                {
-                    connection.release();
-                    console.log('BOARD: Error while getting database connection to send missing data. ' + err);
-                }
-            });
-        };
-
-        var addNode = function(textNode: TextStyle, textId: number, editId: number, socket: SocketIO.Socket) : void
-        {
-            my_sql_pool.getConnection(function(err, connection)
-            {
-                if(!err)
-                {
-                    connection.query('USE Online_Comms');
-                    connection.query('INSERT INTO Text_Style_Node(Entry_ID, Seq_Num, Text_Data, Colour, Weight, Decoration, Style, Start, End) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    [textId, textNode.num, textNode.text, textNode.colour, textNode.weight, textNode.decoration, textNode.style, textNode.start, textNode.end],
-                    function(err, rows, fields)
-                    {
-                        if (err)
-                        {
-                            console.log('BOARD: Error while performing new style node query. ' + err);
-                        }
-                        else
-                        {
-
-                            var msg : ServerStyleNodeMessage = {
-                                editId: editId, userId: boardConnData[socket.id].userId, weight: textNode.weight, decoration: textNode.decoration, num: textNode.num,
-                                style: textNode.style, colour: textNode.colour, start: textNode.start, end: textNode.end, text: textNode.text, serverId: textId
-                            };
-                            socket.to(boardConnData[socket.id].roomId.toString()).emit('STYLENODE', msg);
-                        }
-                        connection.release();
-                    });
-
-                }
-                else
-                {
-                    console.log('BOARD: Error while getting database connection to add new style node. ' + err);
-                    connection.release();
-                }
-            });
-        };
-
-
-        var comleteEdit = function(editId: number, socket: SocketIO.Socket) : void
-        {
-            var i;
-            var textId = boardConnData[socket.id].editIds[editId].textId;
-
-            clearTimeout(boardConnData[socket.id].textTimeouts[editId]);
-
-            my_sql_pool.getConnection(function(err, connection)
-            {
-                if(!err)
-                {
-                    connection.query('USE Online_Comms');
-                    connection.query('DELETE FROM Text_Style_Node WHERE Entry_ID = ?', [textId],
-                    function(err, rows, fields)
-                    {
-                        if (err)
-                        {
-                            console.log('BOARD: Error while performing remove old nodes query. ' + err);
-                            connection.release();
-                        }
-                        else
-                        {
-                            for(i = 0; i < boardConnData[socket.id].recievedNodes[editId].length; i++)
-                            {
-                                (function(nodeData, textId, editId) { setTimeout(addNode(nodeData, textId, editId, socket), 0); })(boardConnData[socket.id].recievedNodes[editId][i], textId, editId);
-                            }
-
-                            connection.query('UPDATE Text_Space SET Num_Style_Nodes = ? WHERE Entry_ID = ?', [boardConnData[socket.id].recievedNodes[editId].length, textId],
-                            function(err, rows, fields)
-                            {
-                                if(err)
-                                {
-                                    console.log('BOARD: Error updating the number of style nodes. ' + err);
-                                }
-                                connection.release();
-                            });
-                        }
-
-                    });
-
-                }
-                else
-                {
-                    console.log('BOARD: Error while getting database connection to remove old nodes. ' + err);
-                    connection.release();
-                }
-            });
-        };
-
-        let sendStyle = function(nodeData, textId: number, socket: SocketIO.Socket) : void
-        {
-            console.log('Sending user stylenode.');
-
-
-            let msg: ServerStyleNodeMessage = {
-                serverId: textId, num: nodeData.Seq_Num, text: nodeData.Text_Data, colour: nodeData.Colour, weight: nodeData.Weight, decoration:  nodeData.Decoration,
-                style: nodeData.Style, start: nodeData.Start, end: nodeData.End, userId: 0, editId: 0
-            };
-
-            socket.emit('STYLENODE', msg);
         }
 
-
-        var sendText = function(textData, socket: SocketIO.Socket) : void
+        private handleJustifyMessage(message: UserJustifyMessage, serverId: number, socket: SocketIO.Socket, connection: MySql.SQLConnection, boardConnData: BoardConnection)
         {
-            let msg: ServerEditTextMessage = { userId: 0, serverId: textData.Entry_ID, editId: 0, num_nodes: textData.Num_Style_Nodes, editTime: textData.Edit_Time };
-            socket.emit('EDIT-TEXT', msg);
+            connection.query('UPDATE Text_Space SET Justified = ? WHERE Entry_ID = ?', [message.newState, serverId], function(err, rows, fields)
+            {
+                if (err)
+                {
+                    console.log('BOARD: Error while updating textbox justify state. ' + err);
+                    connection.release();
+                    return;
+                }
+
+                /* TODO: This message sending stuff should really be in its own function, i.e. emit() and broadcast() */
+                let payload: ServerJustifyMessage = { newState: message.newState };
+                let justifyMsg : ServerMessage = { header: MessageTypes.JUSTIFY, payload: payload };
+                let justifyCont: ServerMessageContainer =
+                {
+                    serverId: serverId, userId: boardConnData.userId, type: MODENAME, payload: justifyMsg
+                };
+                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', justifyCont);
+
+                connection.release();
+            });
+        }
+
+        /** Handle sending the dropped message for this item if the receiving of this element failed.
+         *
+         *
+         *  @param {number} id - The ID for the element.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {MySql.Pool} my_sql_pool - The mySQL connection pool to get a mySQL connection.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
+        protected dropElement(id: number, socket: SocketIO.Socket, my_sql_pool: MySql.Pool, boardConnData: BoardConnection)
+        {
+            super.dropElement(id, socket, my_sql_pool, boardConnData);
+
+            let userData: ComponentData = this.componentData[boardConnData.userId];
+            userData.edits[id] = null;
+            userData.incompleteEdits[id] = null;
 
             my_sql_pool.getConnection((err, connection) =>
             {
-                if(!err)
+                if(err)
                 {
-                    connection.query('USE Online_Comms',
-                    (err) =>
+                    console.log('BOARD: Error while getting database connection to remove malformed curve. ' + err);
+                    connection.release();
+                    return;
+                }
+
+                connection.query('USE Online_Comms',
+                (err) =>
+                {
+                    if (err)
                     {
-                        if (err)
+                        console.log('BOARD: Error while performing new control point query. ' + err);
+                        connection.release();
+                        return;
+                    }
+
+                    connection.query('DELETE FROM Text_Style_Node WHERE Entry_ID = ?', [id], (err, result) =>
+                    {
+                        if(err)
                         {
-                            console.log('BOARD: Error while setting database schema. ' + err);
+                            console.log('BOARD: Error while removing badly formed curve. ' + err);
                             connection.release();
+                            return;
                         }
-                        else
+
+                        connection.query('DELETE FROM Text_Space WHERE Entry_ID = ?', [id], (err, result) =>
                         {
-                            connection.query('SELECT * FROM Text_Style_Node WHERE Entry_ID = ?', [textData.Entry_ID], (perr, prows, pfields) =>
+                            if(err)
                             {
-                                if (perr)
+                                console.log('BOARD: Error while removing badly formed curve. ' + err);
+                                connection.release();
+                                return;
+                            }
+
+                            connection.query('DELETE FROM Whiteboard_Space WHERE Entry_ID = ?', [id], (err, result) =>
+                            {
+                                if(err)
                                 {
-                                    console.log('BOARD: Error while performing existing style nodes query. ' + perr);
-                                }
-                                else
-                                {
-                                    var i;
-                                    for(i = 0; i < prows.length; i++)
-                                    {
-                                        ((data, textId) => { setTimeout(() => { sendStyle(data, textId, socket); }, 100); })(prows[i], textData.Entry_ID);
-                                    }
+                                    console.log('BOARD: Error while removing badly formed curve. ' + err);
                                 }
                                 connection.release();
                             });
-                        }
+                        });
                     });
+                });
+            });
+        }
+
+        private missedNodes(serverId: number, editId: number, socket: SocketIO.Socket, my_sql_pool: MySql.Pool, boardConnData: BoardConnection)
+        {
+            let userData: ComponentData = this.componentData[boardConnData.userId];
+            let editData: EditData = userData.edits[serverId][editId];
+
+            editData.nodeRetries++;
+
+            console.log("Trying to get missing node for elemId: " + serverId + " editId: " + editId);
+
+            for(let i = 0; i < editData.numNodes; i++)
+            {
+                if(!editData.recievedNodes[i])
+                {
+                    if(editData.nodeRetries > 10 || boardConnData.cleanUp)
+                    {
+                        clearInterval(editData.nodeTimeout);
+                        editData.recievedNodes = [];
+                        editData.cleanedNodes = [];
+
+                        console.log("Dropped edit.");
+
+                        let payload: ServerDroppedMessage = { editId: editId, bufferId: editData.localId };
+                        let droppedMsg : ServerMessage = { header: MessageTypes.DROPPED, payload: payload };
+                        let droppedCont: ServerMessageContainer =
+                        {
+                            serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: droppedMsg
+                        };
+                        socket.emit('MSG-COMPONENT', droppedCont);
+
+                        return;
+                    }
                 }
                 else
                 {
-                    console.log('BOARD: Error while getting database connection to send curve. ' + err);
-                    connection.release();
+                    if(boardConnData.isConnected)
+                    {
+                        let payload: ServerMissedMessage = { editId: editId, num: i };
+                        let missedMsg : ServerMessage = { header: MessageTypes.MISSED, payload: payload };
+                        let missedCont: ServerMessageContainer =
+                        {
+                            serverId: serverId, userId: boardConnData.userId, type: MODENAME, payload: missedMsg
+                        };
+                        socket.emit('MSG-COMPONENT', missedCont);
+                    }
                 }
-            });
+            }
+        }
+
+        private handleMissingMessage(message: UserMissingNodeMessage, serverId: number, socket: SocketIO.Socket, connection, boardConnData: BoardConnection)
+        {
+            console.log('BOARD: Received missing message.');
+            let node = this.componentData[message.userId].edits[serverId][message.editId].cleanedNodes[message.seq_num];
+
+            this.sendNode(serverId, message.editId, node, socket, boardConnData);
         }
     }
 }
@@ -1190,4 +951,6 @@ namespace Text {
 // REGISTER COMPONENT                                                                                                                                         //
 //                                                                                                                                                            //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-registerComponent(FreeCurve.MODENAME, FreeCurve.ComponentClass);
+module.exports = function(registerComponent) {
+    registerComponent(TextBox.MODENAME, TextBox.ComponentClass);
+}
