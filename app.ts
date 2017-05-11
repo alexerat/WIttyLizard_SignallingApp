@@ -1779,12 +1779,6 @@ require('http').get(reqOpt, (res) =>
             console.log('End Point: ' + chunk);
             endPointAddr = chunk;
 
-            reqOpt = {
-              host: '169.254.169.254',
-              port: 80,
-              path: '/latest/meta-data/placement/availability-zone'
-            };
-
             // Amazon Code
             /*
             reqOpt = {
@@ -1812,7 +1806,7 @@ require('http').get(reqOpt, (res) =>
 
             }).on('error', (e) =>
             {
-                console.log("Error retrieving server endpoint: " + e.message);
+                console.log("Error retrieving server zone: " + e.message);
             });
         }
     });
