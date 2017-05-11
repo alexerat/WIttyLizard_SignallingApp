@@ -1178,8 +1178,9 @@ var checkServers = function (err, rows, connection) {
     }
 };
 var getServerData = function (chunk) {
-    console.log('Zone: ' + chunk.split('/').pop());
-    zone = chunk.split('/').pop();
+    var chunkString = chunk + '';
+    console.log('Zone: ' + chunkString.split('/').pop());
+    zone = chunkString.split('/').pop();
     my_sql_pool.getConnection(function (err, connection) {
         if (!err) {
             var qStr = void 0;

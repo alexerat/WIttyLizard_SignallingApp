@@ -1716,10 +1716,11 @@ let checkServers = function(err, rows, connection)
     }
 }
 
-let getServerData = function(chunk: string)
+let getServerData = function(chunk)
 {
-    console.log('Zone: ' + chunk.split('/').pop());
-    zone = chunk.split('/').pop();
+    let chunkString = chunk + '';
+    console.log('Zone: ' + chunkString.split('/').pop());
+    zone = chunkString.split('/').pop();
 
     my_sql_pool.getConnection((err, connection) =>
     {
