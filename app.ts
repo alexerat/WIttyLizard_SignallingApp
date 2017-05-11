@@ -1664,19 +1664,11 @@ bor_io.on('connection', function(socket)
 
 // Amazon Code
 /*
-let reqOpt = {
-  host: '169.254.169.254',
-  port: 80,
-  path: '/latest/meta-data/public-hostname'
-};
+let reqOpt = '169.254.169.254/latest/meta-data/public-hostname';
 */
 
 // Google code
-let reqOpt = {
-  host: 'http://metadata.google.internal/computeMetadata/v1/instance/',
-  port: 80,
-  path: 'network-interfaces/0/access-configs/0/external-ip'
-};
+let reqOpt = 'http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip';
 
 
 let endPointAddr;
@@ -1781,19 +1773,11 @@ require('http').get(reqOpt, (res) =>
 
             // Amazon Code
             /*
-            reqOpt = {
-                host: '169.254.169.254',
-              port: 80,
-              path: '/latest/meta-data/placement/availability-zone'
-            };
+            reqOpt = '169.254.169.254/latest/meta-data/placement/availability-zone';
             */
 
             // Google code
-            reqOpt = {
-                host: 'http://metadata.google.internal/computeMetadata/v1/instance/',
-                port: 80,
-                path: 'zone'
-            };
+            reqOpt = 'http://metadata.google.internal/computeMetadata/v1/instance/zone';
 
             require('http').get(reqOpt, (res) =>
             {

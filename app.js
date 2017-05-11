@@ -1144,18 +1144,10 @@ bor_io.on('connection', function (socket) {
 });
 // Amazon Code
 /*
-let reqOpt = {
-  host: '169.254.169.254',
-  port: 80,
-  path: '/latest/meta-data/public-hostname'
-};
+let reqOpt = '169.254.169.254/latest/meta-data/public-hostname';
 */
 // Google code
-var reqOpt = {
-    host: 'http://metadata.google.internal/computeMetadata/v1/instance/',
-    port: 80,
-    path: 'network-interfaces/0/access-configs/0/external-ip'
-};
+var reqOpt = 'http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip';
 var endPointAddr;
 var zone;
 var checkServers = function (err, rows, connection) {
@@ -1223,18 +1215,10 @@ require('http').get(reqOpt, function (res) {
             endPointAddr = chunk;
             // Amazon Code
             /*
-            reqOpt = {
-                host: '169.254.169.254',
-              port: 80,
-              path: '/latest/meta-data/placement/availability-zone'
-            };
+            reqOpt = '169.254.169.254/latest/meta-data/placement/availability-zone';
             */
             // Google code
-            reqOpt = {
-                host: 'http://metadata.google.internal/computeMetadata/v1/instance/',
-                port: 80,
-                path: 'zone'
-            };
+            reqOpt = 'http://metadata.google.internal/computeMetadata/v1/instance/zone';
             require('http').get(reqOpt, function (res) {
                 console.log("Got response for zone: " + res.statusCode);
                 if (res.statusCode == 200) {
