@@ -1,5 +1,12 @@
-{"files": [
-        "./comm_server.ts",
+{
+"compilerOptions": {
+        "compileOnSave": true,
+        "target": "es5",
+        "lib": [ "es6", "dom", "dom.iterable", "scripthost" ]
+    }, 
+
+"files": [
+        "./app.ts",
         "./ComponentBase.ts",
         "./components/FreeCurve.ts",
         "./components/Text.ts",

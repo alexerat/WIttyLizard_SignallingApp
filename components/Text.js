@@ -1,14 +1,31 @@
 "use strict";
-var __extends = (this && this.__extends) || function (d, b) {
-    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
-    function __() { this.constructor = d; }
-    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
-};
+var __extends = (this && this.__extends) || (function () {
+    var extendStatics = Object.setPrototypeOf ||
+        ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+        function (d, b) { for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p]; };
+    return function (d, b) {
+        extendStatics(d, b);
+        function __() { this.constructor = d; }
+        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
 var ComponentBase = require("../ComponentBase");
+/** Text Component.
+*
+* This allows the user to write text that will be rendered as SVG text.
+*
+*/
 var TextBox;
 (function (TextBox) {
+    /**
+     * The name of the mode associated with this component.
+     */
     TextBox.MODENAME = 'TEXT';
     var typeCheck = require('check-types');
+    /**
+     * Message types that can be sent ebtween the user and server.
+     */
     var MessageTypes = {
         NODE: 1,
         MISSED: 2,
@@ -19,13 +36,23 @@ var TextBox;
         IGNORE: 7,
         SIZECHANGE: 8
     };
+    /** Free Curve Component.
+    *
+    * This is the class that will be used to store the data associated with these components and handle component specific messaging.
+    *
+    */
     var ComponentClass = (function (_super) {
         __extends(ComponentClass, _super);
         function ComponentClass() {
-            var _this = _super.apply(this, arguments) || this;
+            var _this = _super !== null && _super.apply(this, arguments) || this;
             _this.componentData = [];
             return _this;
         }
+        /** Initialize the buffers for this component and socket.
+         *
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
         ComponentClass.prototype.userJoin = function (socket, boardConnData) {
             var userData = this.componentData[boardConnData.userId];
             if (userData == undefined || userData == null) {
@@ -35,6 +62,10 @@ var TextBox;
                 this.componentData[boardConnData.userId] = userData;
             }
         };
+        /** Remove all data for this connection associated with this component.
+         *
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
         ComponentClass.prototype.sessionEnd = function (boardConnData) {
             var userData = this.componentData[boardConnData.userId];
             if (userData != undefined && userData != null) {
@@ -63,6 +94,13 @@ var TextBox;
             };
             socket.emit('MSG-COMPONENT', msgCont);
         };
+        /** Handle the initial sending of this element data to the user.
+         *
+         *  @param {SQLElementData} elemData - The basic data about this element.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {MySql.SQLConnection} connection - The SQL connection to query against.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
         ComponentClass.prototype.sendData = function (elemData, socket, connection, boardConnData) {
             connection.query('SELECT * FROM Text_Space WHERE Entry_ID = ?', [elemData.Entry_ID], function (err, rows, fields) {
                 if (err) {
@@ -104,6 +142,15 @@ var TextBox;
                 });
             });
         };
+        /** Handle receiving a new element of this component type, checking that the recieved element data is of the right type.
+         *
+         *  @param {UserNewTextMessage} message - The message containing the element data.
+         *  @param {number} id - The ID for the element.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {SQLConnection} connection - The SQL connection to query against.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         *  @param {MySql.Pool} my_sql_pool - The mySQL connection pool to get a mySQL connection.
+         */
         ComponentClass.prototype.handleNew = function (message, id, socket, connection, boardConnData, my_sql_pool) {
             console.log('BOARD: Received element of type: ' + TextBox.MODENAME);
             if (typeCheck.number(message.size)) {
@@ -113,6 +160,15 @@ var TextBox;
                 return connection.rollback(function () { connection.release(); });
             }
         };
+        /** Handle messages for elements of this component type.
+         *
+         *  @param {UserMessage} message - The message.
+         *  @param {number} serverId - The ID for the element.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {SQLConnection} connection - The SQL connection to query against.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         *  @param {MySql.Pool} my_sql_pool - The mySQL connection pool to get a mySQL connection.
+         */
         ComponentClass.prototype.handleElementMessage = function (message, serverId, socket, connection, boardConnData, my_sql_pool) {
             var type = message.header;
             switch (type) {
@@ -136,9 +192,18 @@ var TextBox;
                     break;
             }
         };
+        /** Handle users requesting information for an unknown element of this component type.
+         *
+         *  @param {number} serverId - The ID for the element.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {SQLConnection} connection - The SQL connection to query against.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
         ComponentClass.prototype.handleUnknownMessage = function (serverId, socket, connection, boardConnData) {
+            /* TODO: Remove debugging code. */
             console.log('Recieved UNKNOWN message for element: ' + serverId);
             var self = this;
+            // Send client curve data if available, client may then request missing points.
             connection.query('SELECT * FROM Whiteboard_Space WHERE Entry_ID = ? AND Room_ID = ?', [serverId, boardConnData.roomId], function (err, rows, fields) {
                 if (err) {
                     console.log('BOARD: Error while performing text query.' + err);
@@ -191,32 +256,53 @@ var TextBox;
                 });
             });
         };
+        /** Handle any necessary data handling on a user disconnect (connection need not be cleaned yet, will wait 5 sec for reconnection.
+         *
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
         ComponentClass.prototype.handleDisconnect = function (boardConnData, my_sql_pool) {
             var userData = this.componentData[boardConnData.userId];
             for (var i = 0; i < userData.incompleteEdits.length; i++) {
                 var edit = userData.edits[userData.incompleteEdits[i].textId][userData.incompleteEdits[i].editId];
+                /* TODO: Remove debugging code. */
                 console.log('Cleared interval after disconnect.');
+                // Stop requesting missing points while disconnected
                 clearInterval(edit.nodeTimeout);
             }
         };
+        /** Handle any necessary data handling on a user reconnect (connection has not been cleaned).
+         *
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         */
         ComponentClass.prototype.handleReconnect = function (boardConnData, socket, my_sql_pool) {
             var userData = this.componentData[boardConnData.userId];
             var self = this;
             var _loop_1 = function (i) {
                 var edit = userData.edits[userData.incompleteEdits[i].textId][userData.incompleteEdits[i].editId];
+                /* TODO: Remove debugging code. */
                 console.log('Re-added timeout after reconnect.');
+                // Re-establish the timeouts upon reconnection.
                 edit.nodeTimeout = setInterval(function (id) { self.missedNodes(userData.incompleteEdits[i].textId, userData.incompleteEdits[i].editId, socket, my_sql_pool, boardConnData); }, 1000, edit);
             };
             for (var i = 0; i < userData.incompleteEdits.length; i++) {
                 _loop_1(i);
             }
         };
+        /** Handle any necessary data cleanup for lost or ended user connection.
+         *
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {MySql.Pool} my_sql_pool - The mySQL connection pool to get a mySQL connection.
+         */
         ComponentClass.prototype.handleClean = function (boardConnData, socket, my_sql_pool) {
             _super.prototype.handleClean.call(this, boardConnData, socket, my_sql_pool);
             var userData = this.componentData[boardConnData.userId];
             for (var i = 0; i < userData.incompleteEdits.length; i++) {
                 var edit = userData.edits[userData.incompleteEdits[i].textId][userData.incompleteEdits[i].editId];
+                /* TODO: Remove debugging code. */
                 console.log('Cleared interval after disconnect.');
+                // Stop requesting missing points while disconnected
                 clearInterval(edit.nodeTimeout);
             }
             userData.incompleteEdits = [];
@@ -243,6 +329,7 @@ var TextBox;
                         return connection.rollback(function () { console.error(err); connection.release(); });
                     }
                     var idMsg = { serverId: id, localId: message.localId };
+                    // Tell the user the ID to assign points to.
                     socket.emit('ELEMENT-ID', idMsg);
                     console.log('BOARD: Sending text ID: ' + id);
                     var textMsg = {
@@ -266,6 +353,7 @@ var TextBox;
                     connection.release();
                     return;
                 }
+                /* TODO: This message sending stuff should really be in its own function, i.e. emit() and broadcast() */
                 var payload = { newSize: message.newSize };
                 var sizeMsg = { header: MessageTypes.SIZECHANGE, payload: payload };
                 var sizeCont = {
@@ -304,6 +392,7 @@ var TextBox;
                     }
                     editData.cleanedNodes = cleanNodes.slice();
                     if (cleanNodes.length < message.num_styles) {
+                        // Set a 0.5 sec timeout to inform the client of missing points.
                         editData.nodeTimeout = setInterval(self.missedNodes.bind(self), 500, serverId, editId, socket, my_sql_pool, boardConnData);
                         editData.numRecieved = numOK;
                         editData.recievedNodes = received.slice();
@@ -314,6 +403,7 @@ var TextBox;
                     }
                 }
                 else {
+                    // DROP EDIT
                     var dropPayload = { editId: null, bufferId: message.bufferId };
                     var droppedMsg = { header: MessageTypes.DROPPED, payload: dropPayload };
                     var droppedCont = {
@@ -380,6 +470,7 @@ var TextBox;
                 });
             });
         };
+        //Listens for points as part of a curve, must recive a funn let from the initiation.
         ComponentClass.prototype.handleNodeMessage = function (message, serverId, socket, connection, boardConnData) {
             var userData = this.componentData[boardConnData.userId];
             if (userData.edits[serverId] != null && userData.edits[serverId] != undefined) {
@@ -405,6 +496,7 @@ var TextBox;
                     connection.release();
                     return;
                 }
+                /* TODO: This message sending stuff should really be in its own function, i.e. emit() and broadcast() */
                 var payload = { newState: message.newState };
                 var justifyMsg = { header: MessageTypes.JUSTIFY, payload: payload };
                 var justifyCont = {
@@ -414,6 +506,14 @@ var TextBox;
                 connection.release();
             });
         };
+        /** Handle sending the dropped message for this item if the receiving of this element failed.
+         *
+         *
+         *  @param {number} id - The ID for the element.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {MySql.Pool} my_sql_pool - The mySQL connection pool to get a mySQL connection.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
         ComponentClass.prototype.dropElement = function (id, socket, my_sql_pool, boardConnData) {
             _super.prototype.dropElement.call(this, id, socket, my_sql_pool, boardConnData);
             var userData = this.componentData[boardConnData.userId];
@@ -496,6 +596,11 @@ var TextBox;
     }(ComponentBase.Component));
     TextBox.ComponentClass = ComponentClass;
 })(TextBox || (TextBox = {}));
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                                                            //
+// REGISTER COMPONENT                                                                                                                                         //
+//                                                                                                                                                            //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 module.exports = function (registerComponent) {
     registerComponent(TextBox.MODENAME, TextBox.ComponentClass);
 };

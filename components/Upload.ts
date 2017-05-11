@@ -13,8 +13,15 @@ namespace Upload {
 
     const urlMod = require('url');
     const typeCheck = require('check-types');
+
+    const BUCKETURL = 'https://wittylizard-162000.appspot.com';
+    // GOODLE CODE
+    let Storage = require('@google-cloud/storage');
+    /* AMAZON CODE
     const AWS = require('aws-sdk');
     const s3 = new AWS.S3();
+    */
+
     const uuid = require('node-uuid');
 
     const ViewTypes = {
@@ -536,12 +543,15 @@ namespace Upload {
                     buffer[i] = upArray[i];
                 }
 
+
+                /* AMAZON CODE
                 // TODO: User Metadata param to store copyright info
                 let params =
                 {
                     Body: buffer, ContentType: file.type, Metadata: { Origin: 'USER: ' + boardConnData.userId },
                     Bucket: 'whiteboard-storage', Key: '/UserTemp' + file.fileName, ACL: 'public-read'
                 };
+
                 let upload = new AWS.S3.ManagedUpload({ params: params, service: s3 });
 
                 upload.send(function(err, upData)
@@ -553,7 +563,7 @@ namespace Upload {
                         return;
                     }
 
-                    let fileURL = 'https://whiteboard-storage.s3.amazonaws.com/UserTemp/' + file.fileName;
+                    let fileURL = BUCKETURL + '/UserTemp/' + file.fileName;
                     let fType = file.type;
 
                     file = null;
@@ -581,6 +591,8 @@ namespace Upload {
                         connection.release();
                     });
                 });
+
+                */
             }
             else if(file.downloaded > file.fileSize)
             {
@@ -1173,13 +1185,81 @@ namespace Upload {
                     buffer[i] = upArray[i];
                 }
 
+                userData.retries[serverId] = null;
+
+
+                // GOODLE CODE
+
+                // Instantiate a storage client
+                let storage = Storage();
+                let bucket = storage.bucket(process.env.GCLOUD_STORAGE_BUCKET);
+
+                let opts = { metadata: { metadata: { Origin: origin }, contentType: fileType, cacheControl: "public" } };
+                let blobStream = bucket.file(userData.fNames[serverId]).createWriteStream(opts);
+
+                blobStream.on('error', (err) => {
+                    console.log('BOARD: Error sending file: ' + err);
+                    return;
+                });
+
+                blobStream.on('finish', () => {
+                    let fileURL = BUCKETURL + '/UserTemp/' + userData.fNames[serverId];
+
+                    console.log('BOARD: Received All File Data.');
+
+                    my_sql_pool.getConnection((err, connection) =>
+                    {
+                        if(err)
+                        {
+                            console.log('BOARD: Error while getting database connection. ' + err);
+                            return connection.release();
+                        }
+
+                        connection.query('USE Online_Comms',
+                        (err) =>
+                        {
+                            if (err)
+                            {
+                                console.log('BOARD: Error while performing new upload query. ' + err);
+                                return connection.release();
+                            }
+
+                            connection.query('UPDATE Upload_Space SET isComplete = 1, Content_URL = ?, File_Type = ? WHERE Entry_ID = ?',
+                            [fileURL, fileType, serverId],
+                            (err, rows) =>
+                            {
+                                if (!err)
+                                {
+                                    console.log('BOARD: Error while performing complete upload query. ' + err);
+                                    return connection.release();
+                                }
+
+                                let payload: ServerCompleteMessage = { fileURL: fileURL };
+                                let compMsg : ServerMessage = { header: MessageTypes.DONE, payload: payload };
+                                let compCont: ServerMessageContainer =
+                                {
+                                    serverId: serverId, userId: boardConnData.userId, type: MODENAME, payload: compMsg
+                                };
+                                socket.emit('MSG-COMPONENT', compCont);
+                                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', compCont);
+
+                                connection.release();
+                            });
+                        });
+                    });
+                });
+
+                blobStream.end(buffer);
+
+
+
+                /*
+                // AMAZON CODE
                 let params =
                 {
                     Body: buffer, Metadata: { Origin: origin }, ContentType: fileType,
                     Bucket: 'whiteboard-storage', Key: '/UserTemp' + userData.fNames[serverId], ACL: 'public-read'
                 };
-
-                userData.retries[serverId] = null;
 
                 let upload = new AWS.S3.ManagedUpload({ params: params, service: s3 });
 
@@ -1192,7 +1272,7 @@ namespace Upload {
                         return;
                     }
 
-                    let fileURL = 'https://whiteboard-storage.s3.amazonaws.com/UserTemp/' + userData.fNames[serverId];
+                    let fileURL = BUCKETURL + '/UserTemp/' + userData.fNames[serverId];
 
                     console.log('BOARD: Received All File Data.');
 
@@ -1237,6 +1317,7 @@ namespace Upload {
                         });
                     });
                 });
+                */
             }
         }
     }

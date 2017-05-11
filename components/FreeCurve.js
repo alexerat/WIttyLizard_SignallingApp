@@ -1,14 +1,31 @@
 "use strict";
-var __extends = (this && this.__extends) || function (d, b) {
-    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
-    function __() { this.constructor = d; }
-    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
-};
+var __extends = (this && this.__extends) || (function () {
+    var extendStatics = Object.setPrototypeOf ||
+        ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+        function (d, b) { for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p]; };
+    return function (d, b) {
+        extendStatics(d, b);
+        function __() { this.constructor = d; }
+        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
 var ComponentBase = require("../ComponentBase");
+/** Free Curve Component.
+*
+* This allows the user to free draw curves that will be smoothed and rendered as Beziers.
+*
+*/
 var FreeCurve;
 (function (FreeCurve) {
+    /**
+     * The name of the mode associated with this component.
+     */
     FreeCurve.MODENAME = 'FREECURVE';
     var typeCheck = require('check-types');
+    /**
+     * Message types that can be sent ebtween the user and server.
+     */
     var MessageTypes = {
         IGNORE: 1,
         COMPLETE: 2,
@@ -16,13 +33,23 @@ var FreeCurve;
         POINTMISSED: 4,
         MISSINGPOINT: 5
     };
+    /** Free Curve Component.
+    *
+    * This is the class that will be used to store the data associated with these components and handle component specific messaging.
+    *
+    */
     var ComponentClass = (function (_super) {
         __extends(ComponentClass, _super);
         function ComponentClass() {
-            var _this = _super.apply(this, arguments) || this;
+            var _this = _super !== null && _super.apply(this, arguments) || this;
             _this.componentData = [];
             return _this;
         }
+        /** Initialize the buffers for this component and socket.
+         *
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {BoardConnection} The connection data associated with this socket.
+         */
         ComponentClass.prototype.userJoin = function (socket, boardConnData) {
             var userData = this.componentData[boardConnData.userId];
             if (userData == undefined || userData == null) {
@@ -30,6 +57,10 @@ var FreeCurve;
                 this.componentData[boardConnData.userId] = userData;
             }
         };
+        /** Remove all data for this connection associated with this component.
+         *
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
         ComponentClass.prototype.sessionEnd = function (boardConnData) {
             var userData = this.componentData[boardConnData.userId];
             if (userData != undefined && userData != null) {
@@ -48,6 +79,13 @@ var FreeCurve;
             var msgCont = { serverId: pointData.Entry_ID, userId: boardConnData.userId, type: FreeCurve.MODENAME, payload: msg };
             socket.emit('MSG-COMPONENT', msgCont);
         };
+        /** Handle the initial sending of this element data to the user.
+         *
+         *  @param {SQLElementData} elemData - The basic data about this element.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {MySql.SQLConnection} connection - The SQL connection to query against.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
         ComponentClass.prototype.sendData = function (elemData, socket, connection, boardConnData) {
             var self = this;
             connection.query('SELECT * FROM Free_Curve WHERE Entry_ID = ?', [elemData.Entry_ID], function (err, rows, fields) {
@@ -74,6 +112,15 @@ var FreeCurve;
                 });
             });
         };
+        /** Handle receiving a new element of this component type, checking that the recieved element data is of the right type.
+         *
+         *  @param {UserNewCurveMessage} message - The message containing the element data.
+         *  @param {number} id - The ID for the element.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {SQLConnection} connection - The SQL connection to query against.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         *  @param {MySql.Pool} my_sql_pool - The mySQL connection pool to get a mySQL connection.
+         */
         ComponentClass.prototype.handleNew = function (message, id, socket, connection, boardConnData, my_sql_pool) {
             console.log('BOARD: Received curve.');
             if (typeCheck.integer(message.num_points) && typeCheck.string(message.colour) && typeCheck.array(message.points)) {
@@ -83,6 +130,15 @@ var FreeCurve;
                 return connection.rollback(function () { connection.release(); });
             }
         };
+        /** Handle messages for elements of this component type.
+         *
+         *  @param {UserMessage} message - The message.
+         *  @param {number} serverId - The ID for the element.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {SQLConnection} connection - The SQL connection to query against.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         *  @param {MySql.Pool} my_sql_pool - The mySQL connection pool to get a mySQL connection.
+         */
         ComponentClass.prototype.handleElementMessage = function (message, serverId, socket, connection, boardConnData, my_sql_pool) {
             var type = message.header;
             switch (type) {
@@ -98,9 +154,18 @@ var FreeCurve;
                     break;
             }
         };
+        /** Handle users requesting information for an unknown element of this component type.
+         *
+         *  @param {number} serverId - The ID for the element.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {MySql.SQLConnection} connection - The SQL connection to query against.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
         ComponentClass.prototype.handleUnknownMessage = function (serverId, socket, connection, boardConnData) {
+            /* TODO: Remove debugging code. */
             console.log('Recieved UNKNOWN message for element: ' + serverId);
             var self = this;
+            // Send client curve data if available, client may then request missing points.
             connection.query('SELECT * FROM Whiteboard_Space WHERE Entry_ID = ? AND Room_ID = ?', [serverId, boardConnData.roomId], function (err, rows, fields) {
                 if (err) {
                     console.log('BOARD: Error while performing curve query.' + err);
@@ -135,6 +200,7 @@ var FreeCurve;
                             userId: elemData.User_ID, size: rows[0].Size, x: elemData.X_Loc, y: elemData.Y_Loc,
                             width: elemData.Width, height: elemData.Height, editTime: elemData.Edit_Time, points: points
                         };
+                        /* TODO: Remove debugging outputs. */
                         console.log('Payload: ' + JSON.stringify(curveMsg));
                         var msgCont = {
                             serverId: serverId, userId: boardConnData.userId, type: FreeCurve.MODENAME, payload: curveMsg
@@ -147,22 +213,39 @@ var FreeCurve;
                 });
             });
         };
+        /** Handle any necessary data handling on a user disconnect (connection need not be cleaned yet, will wait 5 sec for reconnection.
+         *
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
         ComponentClass.prototype.handleDisconnect = function (boardConnData, my_sql_pool) {
             var userData = this.componentData[boardConnData.userId];
             for (var i = 0; i < userData.incomplete.length; i++) {
                 console.log('Cleared interval after disconnect.');
+                // Stop requesting missing points while disconnected
                 clearInterval(userData.timeouts[userData.incomplete[i]]);
             }
         };
+        /** Handle any necessary data handling on a user reconnect (connection has not been cleaned).
+         *
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         */
         ComponentClass.prototype.handleReconnect = function (boardConnData, socket, my_sql_pool) {
             var userData = this.componentData[boardConnData.userId];
             var self = this;
             for (var i = 0; i < userData.incomplete.length; i++) {
                 console.log('Re-added curve timeout after reconnect.');
+                // Re-establish the timeouts upon reconnection.
                 var curveId = userData.incomplete[i];
                 userData.timeouts[curveId] = setInterval(function (id) { self.missedPoints(id, boardConnData, socket, my_sql_pool); }, 1000, curveId);
             }
         };
+        /** Handle any necessary data cleanup for lost or ended user connection.
+         *
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {MySql.Pool} my_sql_pool - The mySQL connection pool to get a mySQL connection.
+         */
         ComponentClass.prototype.handleClean = function (boardConnData, socket, my_sql_pool) {
             _super.prototype.handleClean.call(this, boardConnData, socket, my_sql_pool);
             var userData = this.componentData[boardConnData.userId];
@@ -216,6 +299,7 @@ var FreeCurve;
                             return connection.rollback(function () { console.error(err); connection.release(); });
                         }
                         var idMsg = { serverId: id, localId: message.localId };
+                        // Tell the user the ID to assign points to.
                         socket.emit('ELEMENT-ID', idMsg);
                         console.log('BOARD: Sending curve ID: ' + id);
                         userData.incomplete.push(id);
@@ -224,6 +308,7 @@ var FreeCurve;
                             userData.numPoints[id] = message.num_points;
                             userData.recievedPoints[id] = received.slice();
                             userData.pointRetries[id] = 0;
+                            // Set a 0.5 sec timeout to inform the client of missing points.
                             userData.timeouts[id] = setInterval(self.missedPoints.bind(self), 500, id, boardConnData, socket, my_sql_pool);
                         }
                         else {
@@ -248,7 +333,9 @@ var FreeCurve;
                 });
             });
         };
+        //Listens for points as part of a curve, must recive a funn let from the initiation.
         ComponentClass.prototype.handlePointMessage = function (message, serverId, socket, connection, boardConnData) {
+            /* TODO: Remove test code. */
             console.log('Recieved point message: ' + JSON.stringify(message));
             var userData = this.componentData[boardConnData.userId];
             if (!userData.recievedPoints[serverId][message.num]) {
@@ -261,6 +348,7 @@ var FreeCurve;
                     userData.recievedPoints[serverId][message.num] = true;
                     userData.numRecieved[serverId]++;
                     if (userData.numRecieved[serverId] == userData.numPoints[serverId]) {
+                        // We recived eveything so clear the timeout and give client the OK.
                         clearInterval(userData.timeouts[serverId]);
                         userData.incomplete.splice(userData.incomplete.indexOf(serverId), 1);
                         var completeMsg = { header: MessageTypes.COMPLETE, payload: null };
@@ -273,6 +361,14 @@ var FreeCurve;
                 });
             }
         };
+        /** Handle sending the dropped message for this item if the receiving of this element failed.
+         *
+         *
+         *  @param {number} id - The ID for the element.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {MySql.Pool} my_sql_pool - The mySQL connection pool to get a mySQL connection.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
         ComponentClass.prototype.dropElement = function (id, socket, my_sql_pool, boardConnData) {
             _super.prototype.dropElement.call(this, id, socket, my_sql_pool, boardConnData);
             my_sql_pool.getConnection(function (err, connection) {
@@ -330,6 +426,7 @@ var FreeCurve;
                 }
             }
         };
+        // Listen for cliets requesting missing data.
         ComponentClass.prototype.handleMissingMessage = function (message, serverId, socket, connection, boardConnData) {
             console.log('BOARD: Received missing message.');
             this.sendMissingPoint(message, serverId, socket, connection, boardConnData);
@@ -369,6 +466,11 @@ var FreeCurve;
     }(ComponentBase.Component));
     FreeCurve.ComponentClass = ComponentClass;
 })(FreeCurve || (FreeCurve = {}));
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                                                            //
+// REGISTER COMPONENT                                                                                                                                         //
+//                                                                                                                                                            //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 module.exports = function (registerComponent) {
     registerComponent(FreeCurve.MODENAME, FreeCurve.ComponentClass);
 };

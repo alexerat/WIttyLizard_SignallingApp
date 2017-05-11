@@ -1,7 +1,18 @@
 "use strict";
 var ComponentBase;
 (function (ComponentBase) {
+    /*
+     *  Board socket, used for communicating whiteboard data.
+     *
+     *
+     *
+     *
+     *
+     */
     ComponentBase.SQLElementInsertQuery = 'Type, Room_ID, User_ID, Local_ID, X_Loc, Y_Loc, Width, Height, Edit_Count, Edit_Lock';
+    /**
+     * Message types that can be sent between the user and server for any element type.
+     */
     ComponentBase.BaseMessageTypes = {
         NEW: 0,
         DELETE: -1,
@@ -18,6 +29,12 @@ var ComponentBase;
         function Component(roomUserList) {
             this.roomUserList = roomUserList;
         }
+        /** Handle any necessary data cleanup for lost or ended user connection.
+         *
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {MySql.Pool} my_sql_pool - The mySQL connection pool to get a mySQL connection.
+         */
         Component.prototype.handleClean = function (boardConnData, socket, my_sql_pool) {
             my_sql_pool.getConnection(function (err, connection) {
                 if (err) {
@@ -38,6 +55,14 @@ var ComponentBase;
                 });
             });
         };
+        /** Handle sending the dropped message for this item if the receiving of this element failed.
+         *
+         *
+         *  @param {number} id - The ID for the element.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {MySql.Pool} my_sql_pool - The mySQL connection pool to get a mySQL connection.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
         Component.prototype.dropElement = function (id, socket, my_sql_pool, boardConnData) {
             var droppedMsg = { header: ComponentBase.BaseMessageTypes.DROPPED, payload: null };
             var droppedCont = {
@@ -45,6 +70,14 @@ var ComponentBase;
             };
             socket.emit('MSG-COMPONENT', droppedCont);
         };
+        /** Handle messages for elements of this component type.
+         *
+         *  @param {UserMessage} message - The message.
+         *  @param {number} serverId - The ID for the element.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {MySql.SQLConnection} connection - The SQL connection to query against.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
         Component.prototype.handleMessage = function (message, serverId, socket, connection, boardConnData, my_sql_pool) {
             var type = message.header;
             switch (type) {

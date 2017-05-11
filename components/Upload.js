@@ -1,17 +1,36 @@
 "use strict";
-var __extends = (this && this.__extends) || function (d, b) {
-    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
-    function __() { this.constructor = d; }
-    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
-};
+var __extends = (this && this.__extends) || (function () {
+    var extendStatics = Object.setPrototypeOf ||
+        ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+        function (d, b) { for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p]; };
+    return function (d, b) {
+        extendStatics(d, b);
+        function __() { this.constructor = d; }
+        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
 var ComponentBase = require("../ComponentBase");
+/** Upload Component.
+*
+* This allows the user to drag and drop images, files and videos.
+*
+*/
 var Upload;
 (function (Upload) {
+    /**
+     * The name of the mode associated with this component.
+     */
     Upload.MODENAME = 'UPLOAD';
     var urlMod = require('url');
     var typeCheck = require('check-types');
-    var AWS = require('aws-sdk');
-    var s3 = new AWS.S3();
+    var BUCKETURL = 'https://wittylizard-162000.appspot.com';
+    // GOODLE CODE
+    var Storage = require('@google-cloud/storage');
+    /* AMAZON CODE
+    const AWS = require('aws-sdk');
+    const s3 = new AWS.S3();
+    */
     var uuid = require('node-uuid');
     var ViewTypes = {
         IMAGE: 'IMAGE',
@@ -23,6 +42,9 @@ var Upload;
     };
     var MAXSIZE = 10485760;
     var UPLOADTYPES = [/image/, /video/, /audio/];
+    /**
+     * Message types that can be sent between the user and server.
+     */
     var MessageTypes = {
         START: 1,
         DATA: 2,
@@ -31,19 +53,30 @@ var Upload;
         VIEWTYPE: 5,
         UPDATE: 6
     };
+    /** Free Curve Component.
+    *
+    * This is the class that will be used to store the data associated with these components and handle component specific messaging.
+    *
+    */
     var ComponentClass = (function (_super) {
         __extends(ComponentClass, _super);
         function ComponentClass() {
-            var _this = _super.apply(this, arguments) || this;
+            var _this = _super !== null && _super.apply(this, arguments) || this;
             _this.componentData = [];
             return _this;
         }
+        /** Initialize the buffers for this component and socket.
+         *
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {BoardConnection} The connection data associated with this socket.
+         */
         ComponentClass.prototype.userJoin = function (socket, boardConnData) {
             var userData = this.componentData[boardConnData.userId];
             if (userData == undefined || userData == null) {
                 userData = { files: [], currentUploads: [], fNames: [], currentPieces: [], timeouts: [], retries: [] };
                 this.componentData[boardConnData.userId] = userData;
             }
+            // Resume any open file uploads.
             if (this.componentData[boardConnData.userId].currentUploads.length > 0) {
                 console.log('BOARD: Found incomplete uploads. Attempting to resume.');
                 for (var i = 0; i < boardConnData[socket.id].currentUploads.length; i++) {
@@ -59,6 +92,10 @@ var Upload;
                 }
             }
         };
+        /** Remove all data for this connection associated with this component.
+         *
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
         ComponentClass.prototype.sessionEnd = function (boardConnData) {
             var userData = this.componentData[boardConnData.userId];
             if (userData != undefined && userData != null) {
@@ -70,6 +107,13 @@ var Upload;
             }
             userData = null;
         };
+        /** Handle the initial sending of this element data to the user.
+         *
+         *  @param {SQLElementData} elemData - The basic data about this element.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {MySql.SQLConnection} connection - The SQL connection to query against.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
         ComponentClass.prototype.sendData = function (elemData, socket, connection, boardConnData) {
             connection.query('SELECT * FROM Upload_Space WHERE Entry_ID = ?', [elemData.Entry_ID], function (err, rows, fields) {
                 if (err) {
@@ -93,6 +137,15 @@ var Upload;
                 connection.release();
             });
         };
+        /** Handle receiving a new element of this component type, checking that the recieved element data is of the right type.
+         *
+         *  @param {UserNewUploadMessage} message - The message containing the element data.
+         *  @param {number} id - The ID for the element.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {SQLConnection} connection - The SQL connection to query against.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         *  @param {MySql.Pool} my_sql_pool - The mySQL connection pool to get a mySQL connection.
+         */
         ComponentClass.prototype.handleNew = function (message, id, socket, connection, boardConnData, my_sql_pool) {
             console.log('BOARD: Received Upload.');
             if (!typeCheck.boolean(message.isLocal) || !typeCheck.string(message.fileDesc) || !typeCheck.maybe.number(message.fileSize) ||
@@ -107,6 +160,15 @@ var Upload;
             }
             this.checkUpload(message, id, socket, connection, my_sql_pool, boardConnData);
         };
+        /** Handle messages for elements of this component type.
+         *
+         *  @param {UserMessage} message - The message.
+         *  @param {number} serverId - The ID for the element.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {SQLConnection} connection - The SQL connection to query against.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         *  @param {MySql.Pool} my_sql_pool - The mySQL connection pool to get a mySQL connection.
+         */
         ComponentClass.prototype.handleElementMessage = function (message, serverId, socket, connection, boardConnData, my_sql_pool) {
             var type = message.header;
             switch (type) {
@@ -125,9 +187,17 @@ var Upload;
                     break;
             }
         };
+        /** Handle users requesting information for an unknown element of this component type.
+         *
+         *  @param {number} serverId - The ID for the element.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {SQLConnection} connection - The SQL connection to query against.
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
         ComponentClass.prototype.handleUnknownMessage = function (serverId, socket, connection, boardConnData) {
             var _this = this;
             var self = this;
+            // Send client curve data if available, client may then request missing points.
             connection.query('SELECT * FROM Whiteboard_Space WHERE Entry_ID = ? AND Room_ID = ?', [serverId, boardConnData.roomId], function (err, rows, fields) {
                 if (err) {
                     console.log('BOARD: Error while performing upload query.' + err);
@@ -161,23 +231,40 @@ var Upload;
                 });
             });
         };
+        /** Handle any necessary data handling on a user disconnect (connection need not be cleaned yet, will wait 5 sec for reconnection.
+         *
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         */
         ComponentClass.prototype.handleDisconnect = function (boardConnData, my_sql_pool) {
             var userData = this.componentData[boardConnData.userId];
             for (var i = 0; i < userData.currentUploads.length; i++) {
                 console.log('Cleared interval after disconnect.');
+                // Stop requesting missing data while disconnected
                 clearInterval(userData.timeouts[userData.currentUploads[i]]);
             }
         };
+        /** Handle any necessary data handling on a user reconnect (connection has not been cleaned).
+         *
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         */
         ComponentClass.prototype.handleReconnect = function (boardConnData, socket, my_sql_pool) {
             var self = this;
             var userData = this.componentData[boardConnData.userId];
             for (var i = 0; i < userData.currentUploads.length; i++) {
                 console.log('Re-added curve timeout after reconnect.');
+                // Re-establish the timeouts upon reconnection.
                 var elemId = userData.currentUploads[i];
                 var place = userData.currentPieces[elemId];
                 userData.timeouts[elemId] = setInterval(function (id, place) { self.missedData(id, place, boardConnData, socket, my_sql_pool); }, 60000, elemId, place);
             }
         };
+        /** Handle any necessary data cleanup for lost or ended user connection.
+         *
+         *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
+         *  @param {SocketIO.Socket} socket - The socket for this connection.
+         *  @param {MySql.Pool} my_sql_pool - The mySQL connection pool to get a mySQL connection.
+         */
         ComponentClass.prototype.handleClean = function (boardConnData, socket, my_sql_pool) {
             _super.prototype.handleClean.call(this, boardConnData, socket, my_sql_pool);
             var userData = this.componentData[boardConnData.userId];
@@ -231,6 +318,7 @@ var Upload;
             file.currentPlace++;
             console.log('BOARD: Recieved start message. Requesting first piece.');
             userData.timeouts[serverId] = setInterval(function (id, place) { self.missedData(id, place, boardConnData, socket, my_sql_pool); }, 60000, serverId, 0);
+            // Store the file handler so we can write to it later
             var payload = { place: file.currentPlace, percent: 0 };
             var dataMsg = { header: MessageTypes.DATA, payload: payload };
             var dataCont = {
@@ -269,40 +357,61 @@ var Upload;
                 for (var i = 0; i < buffer.length; ++i) {
                     buffer[i] = upArray[i];
                 }
-                var params = {
+                /* AMAZON CODE
+                // TODO: User Metadata param to store copyright info
+                let params =
+                {
                     Body: buffer, ContentType: file.type, Metadata: { Origin: 'USER: ' + boardConnData.userId },
                     Bucket: 'whiteboard-storage', Key: '/UserTemp' + file.fileName, ACL: 'public-read'
                 };
-                var upload = new AWS.S3.ManagedUpload({ params: params, service: s3 });
-                upload.send(function (err, upData) {
-                    if (err) {
-                        console.log('BOARD: Error uploading file to bucker: ' + err);
+
+                let upload = new AWS.S3.ManagedUpload({ params: params, service: s3 });
+
+                upload.send(function(err, upData)
+                {
+                    if(err)
+                    {
+                        // TODO: Handle error, Make 10 attempts then abandon
+                        console.log('BOARD: Error uploading file to bucker: '+ err);
                         return;
                     }
-                    var fileURL = 'https://whiteboard-storage.s3.amazonaws.com/UserTemp/' + file.fileName;
-                    var fType = file.type;
+
+                    let fileURL = BUCKETURL + '/UserTemp/' + file.fileName;
+                    let fType = file.type;
+
                     file = null;
+
                     console.log('Received All File Data.');
-                    connection.query('UPDATE Upload_Space SET isComplete = 1, Content_URL = ?, File_Type = ? WHERE Entry_ID = ?', [fileURL, fType, serverId], function (err, rows) {
-                        if (err) {
+
+                    connection.query('UPDATE Upload_Space SET isComplete = 1, Content_URL = ?, File_Type = ? WHERE Entry_ID = ?',
+                    [fileURL, fType, serverId], (err, rows) =>
+                    {
+                        if (err)
+                        {
                             console.log('BOARD: Error while performing complete upload query. ' + err);
                             return connection.release();
                         }
-                        var payload = { fileURL: fileURL };
-                        var compMsg = { header: MessageTypes.DONE, payload: payload };
-                        var compCont = {
-                            serverId: serverId, userId: boardConnData.userId, type: Upload.MODENAME, payload: compMsg
+
+                        let payload: ServerCompleteMessage = { fileURL: fileURL };
+                        let compMsg : ServerMessage = { header: MessageTypes.DONE, payload: payload };
+                        let compCont: ServerMessageContainer =
+                        {
+                            serverId: serverId, userId: boardConnData.userId, type: MODENAME, payload: compMsg
                         };
                         socket.emit('MSG-COMPONENT', compCont);
                         socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', compCont);
+
                         connection.release();
                     });
                 });
+
+                */
             }
             else if (file.downloaded > file.fileSize) {
                 console.log('BOARD: Recieved a larger file than the file size given.');
             }
             else if (file.data.byteLength > MAXSIZE) {
+                // If the Data Buffer reaches 10MB we should tell the user the file is too big and just remove it
                 console.log('BOARD: User uploaded a file larger than 10MB, it should have been less than.');
                 var index = userData.currentUploads.indexOf(serverId);
                 userData.currentUploads.splice(index, 1);
@@ -388,6 +497,7 @@ var Upload;
                         return connection.rollback(function () { connection.release(); });
                     }
                     if (rows[0] == null || rows[0] == undefined) {
+                        // File not allowed
                         return connection.rollback(function () { connection.release(); });
                     }
                     console.log('Starting user Upload.');
@@ -418,6 +528,7 @@ var Upload;
                 else if (data.fileType.match(/audio/)) {
                     viewType = ViewTypes.AUDIO;
                 }
+                // Make sure we did not overlap UUID (very unlikely)
                 if (!rows || !rows[0]) {
                     connection.query('INSERT INTO Upload_Space(Entry_ID, UUID, Source, Rotation, isComplete, File_Description, File_Type, Extension, View_Type) ' +
                         'VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)', [serverId, fUUID, 'User', 0, false, data.fileDesc, data.fileType, data.extension, viewType], function (err, result) {
@@ -447,6 +558,7 @@ var Upload;
                             userData.currentUploads.push(serverId);
                             userData.retries[serverId] = [];
                             var idMsg = { serverId: serverId, localId: data.localId };
+                            // Tell the user the ID to assign points to.
                             socket.emit('ELEMENT-ID', idMsg);
                             var uploadMsg = {
                                 header: null, payload: null, userId: boardConnData.userId, x: data.x, y: data.y, width: data.width,
@@ -461,6 +573,7 @@ var Upload;
                     });
                 }
                 else {
+                    // The UUID has already been used (very rare) so try to get a new one.
                     self.startUpload(data, serverId, socket, connection, my_sql_pool, boardConnData);
                 }
             });
@@ -478,6 +591,7 @@ var Upload;
             var self = this;
             var userData = this.componentData[boardConnData.userId];
             var urlObj = urlMod.parse(data.fileURL);
+            // TODO: Set up request properly. Need to split URL in User Message
             var userReq = urlObj;
             connection.commit(function (err) {
                 if (err) {
@@ -486,6 +600,7 @@ var Upload;
                     return connection.rollback(function () { console.error(err); connection.release(); });
                 }
                 var idMsg = { serverId: serverId, localId: data.localId };
+                // Tell the user the ID to assign points to.
                 socket.emit('ELEMENT-ID', idMsg);
                 connection.release();
             });
@@ -578,7 +693,9 @@ var Upload;
                             console.log('BOARD: Error while performing new remote file query.' + err);
                             return connection.release();
                         }
+                        // Make sure we did not overlap UUID (very unlikely)
                         if (rows[0] != null && rows[0] != undefined) {
+                            // The UUID has already been used (very rare) so try to get a new one.
                             connection.release();
                             self.setRemDownload(data, serverId, socket, my_sql_pool, boardConnData, fType);
                             return;
@@ -629,11 +746,14 @@ var Upload;
         ComponentClass.prototype.startRemDownload = function (data, serverId, socket, my_sql_pool, boardConnData) {
             var self = this;
             var urlObj = urlMod.parse(data.fileURL);
+            // TODO: Set up request properly. Need to split URL in User Message
             var userReq = urlObj;
             var userData = this.componentData[boardConnData.userId];
             userData.timeouts[serverId] = setInterval(function (id, place) { self.missedData(id, place, boardConnData, socket, my_sql_pool); }, 60000, serverId, 0);
+            // Get file, then as in user file upload to server. Check size though.
             require('https').get(userReq, function (response) {
                 if (response.statusCode == 301 || response.statusCode == 302) {
+                    // TODO Redirect
                 }
                 else if (response.headers['content-length'] > MAXSIZE) {
                     console.log('Image too large.');
@@ -698,27 +818,28 @@ var Upload;
                 for (var i = 0; i < buffer.length; ++i) {
                     buffer[i] = upArray[i];
                 }
-                var params = {
-                    Body: buffer, Metadata: { Origin: origin }, ContentType: fileType,
-                    Bucket: 'whiteboard-storage', Key: '/UserTemp' + userData.fNames[serverId], ACL: 'public-read'
-                };
                 userData.retries[serverId] = null;
-                var upload = new AWS.S3.ManagedUpload({ params: params, service: s3 });
-                upload.send(function (err, upData) {
-                    if (err) {
-                        console.log('BOARD: Error sending file: ' + err);
-                        return;
-                    }
-                    var fileURL = 'https://whiteboard-storage.s3.amazonaws.com/UserTemp/' + userData.fNames[serverId];
+                // GOODLE CODE
+                // Instantiate a storage client
+                var storage = Storage();
+                var bucket = storage.bucket(process.env.GCLOUD_STORAGE_BUCKET);
+                var opts = { metadata: { metadata: { Origin: origin }, contentType: fileType, cacheControl: "public" } };
+                var blobStream = bucket.file(userData.fNames[serverId]).createWriteStream(opts);
+                blobStream.on('error', function (err) {
+                    console.log('BOARD: Error sending file: ' + err);
+                    return;
+                });
+                blobStream.on('finish', function () {
+                    var fileURL = BUCKETURL + '/UserTemp/' + userData.fNames[serverId];
                     console.log('BOARD: Received All File Data.');
                     my_sql_pool.getConnection(function (err, connection) {
                         if (err) {
-                            console.log('BOARD: Error while getting database connection to remove malformed curve. ' + err);
+                            console.log('BOARD: Error while getting database connection. ' + err);
                             return connection.release();
                         }
                         connection.query('USE Online_Comms', function (err) {
                             if (err) {
-                                console.log('BOARD: Error while performing new control point query. ' + err);
+                                console.log('BOARD: Error while performing new upload query. ' + err);
                                 return connection.release();
                             }
                             connection.query('UPDATE Upload_Space SET isComplete = 1, Content_URL = ?, File_Type = ? WHERE Entry_ID = ?', [fileURL, fileType, serverId], function (err, rows) {
@@ -738,12 +859,83 @@ var Upload;
                         });
                     });
                 });
+                blobStream.end(buffer);
+                /*
+                // AMAZON CODE
+                let params =
+                {
+                    Body: buffer, Metadata: { Origin: origin }, ContentType: fileType,
+                    Bucket: 'whiteboard-storage', Key: '/UserTemp' + userData.fNames[serverId], ACL: 'public-read'
+                };
+
+                let upload = new AWS.S3.ManagedUpload({ params: params, service: s3 });
+
+                upload.send(function(err, upData)
+                {
+                    if(err)
+                    {
+                        // TODO: Handle error, Make 10 attempts then abandon
+                        console.log('BOARD: Error sending file: ' + err);
+                        return;
+                    }
+
+                    let fileURL = BUCKETURL + '/UserTemp/' + userData.fNames[serverId];
+
+                    console.log('BOARD: Received All File Data.');
+
+                    my_sql_pool.getConnection((err, connection) =>
+                    {
+                        if(err)
+                        {
+                            console.log('BOARD: Error while getting database connection to remove malformed curve. ' + err);
+                            return connection.release();
+                        }
+
+                        connection.query('USE Online_Comms',
+                        (err) =>
+                        {
+                            if (err)
+                            {
+                                console.log('BOARD: Error while performing new control point query. ' + err);
+                                return connection.release();
+                            }
+
+                            connection.query('UPDATE Upload_Space SET isComplete = 1, Content_URL = ?, File_Type = ? WHERE Entry_ID = ?',
+                            [fileURL, fileType, serverId],
+                            (err, rows) =>
+                            {
+                                if (!err)
+                                {
+                                    console.log('BOARD: Error while performing complete upload query. ' + err);
+                                    return connection.release();
+                                }
+
+                                let payload: ServerCompleteMessage = { fileURL: fileURL };
+                                let compMsg : ServerMessage = { header: MessageTypes.DONE, payload: payload };
+                                let compCont: ServerMessageContainer =
+                                {
+                                    serverId: serverId, userId: boardConnData.userId, type: MODENAME, payload: compMsg
+                                };
+                                socket.emit('MSG-COMPONENT', compCont);
+                                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', compCont);
+
+                                connection.release();
+                            });
+                        });
+                    });
+                });
+                */
             }
         };
         return ComponentClass;
     }(ComponentBase.Component));
     Upload.ComponentClass = ComponentClass;
 })(Upload || (Upload = {}));
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                                                            //
+// REGISTER COMPONENT                                                                                                                                         //
+//                                                                                                                                                            //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 module.exports = function (registerComponent) {
     registerComponent(Upload.MODENAME, Upload.ComponentClass);
 };
