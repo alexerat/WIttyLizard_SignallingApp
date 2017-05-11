@@ -1,8 +1,8 @@
 runtime: nodejs
 env: flex
 manual_scaling:
-	instances: 1
+  instances: 1
 env_variables:
-	DATABASE_HOST: '130.211.247.213'
-	DATABASE_USER: 'whiteboard'
-	DATABASE_PASSWORD: 'u;Fq>5QPqVvAhsCy'
+  DATABASE_HOST: '130.211.247.213'
+  DATABASE_USER: 'whiteboard'
+  DATABASE_PASSWORD: 'u;Fq>5QPqVvAhsCy'
