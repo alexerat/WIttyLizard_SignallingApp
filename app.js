@@ -22,11 +22,8 @@ var colourTable = [
 var allowedFileTypes = [];
 var app = require('express')();
 var fs = require('fs');
-var privateKey = fs.readFileSync('/var/www/web/fake-keys/privatekey.key').toString();
-var certificate = fs.readFileSync('/var/www/web/fake-keys/certificate.pem').toString();
-var credentials = { key: privateKey, cert: certificate };
-var https = require('https').Server(credentials, app);
-var io = require('socket.io')(https);
+var http = require('http').Server(app);
+var io = require('socket.io')(http);
 var PHPUnserialize = require('php-unserialize');
 var parseCookie = require('cookie-parser');
 var mysql = require('mysql');
@@ -1167,7 +1164,7 @@ var checkServers = function (err, rows, connection) {
                     console.log('Error registering server in list. ' + err);
                     return connection.release();
                 }
-                https.listen(9001, function () {
+                http.listen(9001, function () {
                     console.log("Server listening at", "*:" + 9001);
                 });
                 connection.release();
@@ -1175,7 +1172,7 @@ var checkServers = function (err, rows, connection) {
         }
         else {
             console.log('Server already in list.');
-            https.listen(9001, function () {
+            http.listen(9001, function () {
                 console.log("Server listening at", "*:" + 9001);
             });
             connection.release();
