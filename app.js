@@ -375,7 +375,9 @@ var registerComponent = function (modeName, ModeClass) {
 var normalizedPath = require("path").join(__dirname, "components");
 var ComponentBase = require("./ComponentBase");
 require("fs").readdirSync(normalizedPath).forEach(function (file) {
-    require("./components/" + file)(registerComponent);
+    if (file.endsWith('.js')) {
+        require("./components/" + file)(registerComponent);
+    }
 });
 var sendDataBor = function (socket) {
     my_sql_pool.getConnection(function (err, connection) {
