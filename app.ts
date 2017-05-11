@@ -29,11 +29,9 @@ let allowedFileTypes : Array<string> = [
 
 const app = require('express')();
 const fs = require('fs');
-const privateKey = fs.readFileSync('/var/www/web/fake-keys/privatekey.key').toString();
-const certificate = fs.readFileSync('/var/www/web/fake-keys/certificate.pem').toString();
-const credentials = {key: privateKey, cert: certificate};
-const https = require('https').Server(credentials, app);
-const io : SocketIO.Server = require('socket.io')(https);
+
+const http = require('http').Server(app);
+const io : SocketIO.Server = require('socket.io')(http);
 const PHPUnserialize = require('php-unserialize');
 const parseCookie = require('cookie-parser');
 const mysql: MySql.MySqlModule = require('mysql');
@@ -1695,7 +1693,7 @@ let checkServers = function(err, rows, connection)
                     return connection.release();
                 }
 
-                https.listen(9001, () =>
+                http.listen(9001, () =>
                 {
                     console.log("Server listening at", "*:" + 9001);
                 });
@@ -1707,7 +1705,7 @@ let checkServers = function(err, rows, connection)
         {
             console.log('Server already in list.');
 
-            https.listen(9001, () =>
+            http.listen(9001, () =>
             {
                 console.log("Server listening at", "*:" + 9001);
             });
