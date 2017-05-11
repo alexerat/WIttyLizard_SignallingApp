@@ -534,9 +534,12 @@ let normalizedPath = require("path").join(__dirname, "components");
 
 import ComponentBase = require("./ComponentBase");
 
-require("fs").readdirSync(normalizedPath).forEach(function(file)
+require("fs").readdirSync(normalizedPath).forEach(function(file: string)
 {
-    require("./components/" + file)(registerComponent);
+    if(file.endsWith('.js'))
+    {
+        require("./components/" + file)(registerComponent);
+    }
 });
 
 let sendDataBor = function(socket: SocketIO.Socket) : void
