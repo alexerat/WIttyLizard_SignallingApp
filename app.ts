@@ -44,6 +44,8 @@ let dbHost = process.env.DATABASE_HOST;
 let dbUser = process.env.DATABASE_USER;
 let dbPass = process.env.DATABASE_PASSWORD;
 
+console.log(dbHost);
+
 let my_sql_pool = mysql.createPool({
   host     : dbHost,
   user     : dbUser,
@@ -1714,10 +1716,10 @@ let checkServers = function(err, rows, connection)
     }
 }
 
-let getServerData = function(chunk)
+let getServerData = function(chunk: string)
 {
-    console.log('Zone: ' + chunk);
-    zone = chunk;
+    console.log('Zone: ' + chunk.split('/').pop());
+    zone = chunk.split('/').pop();
 
     my_sql_pool.getConnection((err, connection) =>
     {
@@ -1786,6 +1788,10 @@ require('http').get(reqOpt, (res) =>
                 if(res.statusCode == 200)
                 {
                     res.on('data', getServerData);
+                }
+                else
+                {
+                    // TODO: Error out.
                 }
 
             }).on('error', (e) =>

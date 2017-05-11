@@ -31,6 +31,7 @@ var typeCheck = require('check-types');
 var dbHost = process.env.DATABASE_HOST;
 var dbUser = process.env.DATABASE_USER;
 var dbPass = process.env.DATABASE_PASSWORD;
+console.log(dbHost);
 var my_sql_pool = mysql.createPool({
     host: dbHost,
     user: dbUser,
@@ -1177,8 +1178,8 @@ var checkServers = function (err, rows, connection) {
     }
 };
 var getServerData = function (chunk) {
-    console.log('Zone: ' + chunk);
-    zone = chunk;
+    console.log('Zone: ' + chunk.split('/').pop());
+    zone = chunk.split('/').pop();
     my_sql_pool.getConnection(function (err, connection) {
         if (!err) {
             var qStr = void 0;
@@ -1223,6 +1224,9 @@ require('http').get(reqOpt, function (res) {
                 console.log("Got response for zone: " + res.statusCode);
                 if (res.statusCode == 200) {
                     res.on('data', getServerData);
+                }
+                else {
+                    // TODO: Error out.
                 }
             }).on('error', function (e) {
                 console.log("Error retrieving server zone: " + e.message);
