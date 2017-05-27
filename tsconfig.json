@@ -1,7 +1,8 @@
 {
 "compilerOptions": {
         "target": "es5",
-        "lib": [ "es6", "dom", "dom.iterable", "scripthost" ]
+        "lib": [ "es6", "dom", "dom.iterable", "scripthost" ],
+        "watch": true
     }, 
 
 "files": [
