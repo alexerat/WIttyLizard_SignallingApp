@@ -121,6 +121,9 @@ namespace FreeCurve {
          */
         public sessionEnd(boardConnData: BoardConnection)
         {
+            // TODO: Remove debug code.
+            console.log('Session end recieved for free curve.');
+            
             let userData: ComponentData = this.componentData[boardConnData.userId];
 
             if(userData != undefined && userData != null)

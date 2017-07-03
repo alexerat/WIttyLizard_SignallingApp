@@ -162,16 +162,15 @@ namespace ComponentBase
             {
                 connection.query('UPDATE Whiteboard_Space SET isDeleted = 1 WHERE Entry_ID = ?', [serverId], (err, rows) =>
                 {
-                    if (!err)
-                    {
-                        let msg : ServerMessage = { header: BaseMessageTypes.DELETE, payload: null };
-                        let msgCont: ServerMessageContainer = { serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg };
-                        socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
-                    }
-                    else
+                    if (err)
                     {
                         console.log('BOARD: Error while performing erase query. ' + err);
+                        return connection.release();
                     }
+
+                    let msg : ServerMessage = { header: BaseMessageTypes.DELETE, payload: null };
+                    let msgCont: ServerMessageContainer = { serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg };
+                    socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
                     connection.release();
                 });
             }
@@ -181,34 +180,31 @@ namespace ComponentBase
                 connection.query('SELECT User_ID FROM Whiteboard_Space WHERE Entry_ID = ? AND User_ID = ?', [serverId, boardConnData.userId],
                 (err: MySql.SQLError, rows: Array<number>) =>
                 {
-                    if (!err)
-                    {
-                        if(rows[0] != null && rows[0] != undefined && boardConnData.allowUserEdit)
-                        {
-                            connection.query('UPDATE Whiteboard_Space SET isDeleted = 1 WHERE Entry_ID = ?', [serverId],
-                            (err: MySql.SQLError, rows: Array<number>) =>
-                            {
-                                if (!err)
-                                {
-                                    let msg : ServerMessage = { header: BaseMessageTypes.DELETE, payload: null };
-                                    let msgCont: ServerMessageContainer =
-                                    {
-                                        serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg
-                                    };
-                                    socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
-                                }
-                                else
-                                {
-                                    console.log('BOARD: Error while performing erase query. ' + err);
-                                }
-                                connection.release();
-                            });
-                        }
-                    }
-                    else
+                    if (err)
                     {
                         console.log('BOARD: Error while performing erase:findUser query. ' + err);
-                        connection.release();
+                        return connection.release();
+                    }
+
+                    if(rows[0] != null && rows[0] != undefined && boardConnData.allowUserEdit)
+                    {
+                        connection.query('UPDATE Whiteboard_Space SET isDeleted = 1 WHERE Entry_ID = ?', [serverId],
+                        (err: MySql.SQLError, rows: Array<number>) =>
+                        {
+                            if (err)
+                            {
+                                console.log('BOARD: Error while performing erase query. ' + err);
+                                return connection.release();
+                            }
+
+                            let msg : ServerMessage = { header: BaseMessageTypes.DELETE, payload: null };
+                            let msgCont: ServerMessageContainer =
+                            {
+                                serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg
+                            };
+                            socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
+                            connection.release();
+                        });
                     }
                 });
             }
@@ -336,8 +332,13 @@ namespace ComponentBase
                 connection.query('SELECT User_ID FROM Whiteboard_Space WHERE Entry_ID = ? AND User_ID = ?', [serverId, boardConnData.userId],
                 (err, rows) =>
                 {
-                if (!err)
-                {
+                    if (err)
+                    {
+                        console.log('BOARD: Error while performing lock:findUser query. ' + err);
+                        self.handleRefuse(serverId, socket, boardConnData);
+                        return connection.release();
+                    }
+
                     if(rows[0] != null && rows[0] != undefined && boardConnData.allowUserEdit)
                     {
                         self.handleLock(serverId, connection, socket, boardConnData);
@@ -347,13 +348,6 @@ namespace ComponentBase
                         self.handleRefuse(serverId, socket, boardConnData);
                         connection.release();
                     }
-                }
-                else
-                {
-                    console.log('BOARD: Error while performing lock:findUser query. ' + err);
-                    self.handleRefuse(serverId, socket, boardConnData);
-                    connection.release();
-                }
                 });
             }
         }
@@ -367,50 +361,46 @@ namespace ComponentBase
                 {
                     console.log('BOARD: Error getting lock state. ' + err);
                     self.handleRefuse(serverId, socket, boardConnData);
-                    connection.release();
+                    return connection.release();
+                }
+
+                if(!rows[0].Edit_Lock)
+                {
+                    connection.query('UPDATE Whiteboard_Space SET Edit_Lock = ? WHERE Entry_ID = ?',
+                    [boardConnData.userId, serverId],
+                    (err, rows) =>
+                    {
+                        if (err)
+                        {
+                            console.log('BOARD: Error while performing move query. ' + err);
+                            self.handleRefuse(serverId, socket, boardConnData);
+                            return connection.rollback(() => { console.error(err); connection.release(); });
+                        }
+                        
+                        let idMsg: ServerMessage = { header: BaseMessageTypes.LOCKID, payload: null };
+                        let idMsgCont: ServerMessageContainer =
+                        {
+                            serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: idMsg
+                        };
+                        socket.emit('MSG-COMPONENT', idMsgCont);
+
+                        let payload: ServerLockElementMessage =
+                        {
+                            userId: boardConnData.userId
+                        };
+                        let msg: ServerMessage = { header: BaseMessageTypes.LOCK, payload: payload };
+                        let msgCont: ServerMessageContainer =
+                        {
+                            serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg
+                        };
+                        socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
+                        connection.release();
+                    });
                 }
                 else
                 {
-                    if(!rows[0].Edit_Lock)
-                    {
-                        connection.query('UPDATE Whiteboard_Space SET Edit_Lock = ? WHERE Entry_ID = ?',
-                        [boardConnData.userId, serverId],
-                        (err, rows) =>
-                        {
-                            if (!err)
-                            {
-                                let idMsg: ServerMessage = { header: BaseMessageTypes.LOCKID, payload: null };
-                                let idMsgCont: ServerMessageContainer =
-                                {
-                                    serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: idMsg
-                                };
-                                socket.emit('MSG-COMPONENT', idMsgCont);
-
-                                let payload: ServerLockElementMessage =
-                                {
-                                    userId: boardConnData.userId
-                                };
-                                let msg: ServerMessage = { header: BaseMessageTypes.LOCK, payload: payload };
-                                let msgCont: ServerMessageContainer =
-                                {
-                                    serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg
-                                };
-                                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
-                                connection.release();
-                            }
-                            else
-                            {
-                                console.log('BOARD: Error while performing move query. ' + err);
-                                self.handleRefuse(serverId, socket, boardConnData);
-                                return connection.rollback(() => { console.error(err); connection.release(); });
-                            }
-                        });
-                    }
-                    else
-                    {
-                        self.handleRefuse(serverId, socket, boardConnData);
-                        connection.release();
-                    }
+                    self.handleRefuse(serverId, socket, boardConnData);
+                    connection.release();
                 }
             });
         }
@@ -436,22 +426,20 @@ namespace ComponentBase
                 if (err)
                 {
                     console.log('BOARD: Error releasing lock state. ' + err);
+                    return connection.release();
+                }
+
+                if(rows[0] == null || rows[0] == undefined)
+                {
                     connection.release();
+                }
+                else if(rows[0].Edit_Lock == boardConnData.userId)
+                {
+                    self.handleRelease(serverId, connection, socket, boardConnData);
                 }
                 else
                 {
-                    if(rows[0] == null || rows[0] == undefined)
-                    {
-                        connection.release();
-                    }
-                    else if(rows[0].Edit_Lock == boardConnData.userId)
-                    {
-                        self.handleRelease(serverId, connection, socket, boardConnData);
-                    }
-                    else
-                    {
-                        connection.release();
-                    }
+                    connection.release();
                 }
             });
         }
@@ -463,16 +451,15 @@ namespace ComponentBase
                 if (err)
                 {
                     console.log('BOARD: Error while updating lock state. ' + err);
+                    return connection.release();
                 }
-                else
+
+                let msg: ServerMessage = { header: BaseMessageTypes.RELEASE, payload: null };
+                let msgCont: ServerMessageContainer =
                 {
-                    let msg: ServerMessage = { header: BaseMessageTypes.RELEASE, payload: null };
-                    let msgCont: ServerMessageContainer =
-                    {
-                        serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg
-                    };
-                    socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
-                }
+                    serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg
+                };
+                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
                 connection.release();
             });
         }
@@ -489,18 +476,16 @@ namespace ComponentBase
                 connection.query('SELECT User_ID FROM Whiteboard_Space WHERE Entry_ID = ? AND User_ID = ?', [serverId, boardConnData.userId],
                 (err, rows) =>
                 {
-                if (!err)
-                {
+                    if (err)
+                    {
+                        console.log('BOARD: Error while performing resize:findUser query. ' + err);
+                        return connection.release();
+                    }
+
                     if(rows[0] != null && rows[0] != undefined && boardConnData.allowUserEdit)
                     {
                         self.handleResize(message, serverId, connection, socket, boardConnData);
                     }
-                }
-                else
-                {
-                    console.log('BOARD: Error while performing resize:findUser query. ' + err);
-                    connection.release();
-                }
                 });
             }
         }
@@ -511,25 +496,23 @@ namespace ComponentBase
             [message.width, message.height, serverId],
             (err, rows) =>
             {
-                if (!err)
-                {
-                    let payload: ServerResizeElementMessage =
-                    {
-                        width: message.width, height: message.height, editTime: new Date()
-                    };
-                    let msg: ServerMessage = { header: BaseMessageTypes.RESIZE, payload: payload };
-                    let msgCont: ServerMessageContainer =
-                    {
-                        serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg
-                    };
-                    socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
-                    connection.release();
-                }
-                else
+                if (err)
                 {
                     console.log('BOARD: Error while performing resize query. ' + err);
                     return connection.rollback(() => { console.error(err); connection.release(); });
                 }
+
+                let payload: ServerResizeElementMessage =
+                {
+                    width: message.width, height: message.height, editTime: new Date()
+                };
+                let msg: ServerMessage = { header: BaseMessageTypes.RESIZE, payload: payload };
+                let msgCont: ServerMessageContainer =
+                {
+                    serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg
+                };
+                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
+                connection.release();
             });
         }
     }

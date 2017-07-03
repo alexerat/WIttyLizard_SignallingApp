@@ -107,39 +107,35 @@ var ComponentBase;
         Component.prototype.handleDeleteMessage = function (serverId, socket, connection, boardConnData) {
             if (boardConnData.isHost || boardConnData.allowAllEdit) {
                 connection.query('UPDATE Whiteboard_Space SET isDeleted = 1 WHERE Entry_ID = ?', [serverId], function (err, rows) {
-                    if (!err) {
-                        var msg = { header: ComponentBase.BaseMessageTypes.DELETE, payload: null };
-                        var msgCont = { serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg };
-                        socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
-                    }
-                    else {
+                    if (err) {
                         console.log('BOARD: Error while performing erase query. ' + err);
+                        return connection.release();
                     }
+                    var msg = { header: ComponentBase.BaseMessageTypes.DELETE, payload: null };
+                    var msgCont = { serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg };
+                    socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
                     connection.release();
                 });
             }
             else {
                 connection.query('SELECT User_ID FROM Whiteboard_Space WHERE Entry_ID = ? AND User_ID = ?', [serverId, boardConnData.userId], function (err, rows) {
-                    if (!err) {
-                        if (rows[0] != null && rows[0] != undefined && boardConnData.allowUserEdit) {
-                            connection.query('UPDATE Whiteboard_Space SET isDeleted = 1 WHERE Entry_ID = ?', [serverId], function (err, rows) {
-                                if (!err) {
-                                    var msg = { header: ComponentBase.BaseMessageTypes.DELETE, payload: null };
-                                    var msgCont = {
-                                        serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg
-                                    };
-                                    socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
-                                }
-                                else {
-                                    console.log('BOARD: Error while performing erase query. ' + err);
-                                }
-                                connection.release();
-                            });
-                        }
-                    }
-                    else {
+                    if (err) {
                         console.log('BOARD: Error while performing erase:findUser query. ' + err);
-                        connection.release();
+                        return connection.release();
+                    }
+                    if (rows[0] != null && rows[0] != undefined && boardConnData.allowUserEdit) {
+                        connection.query('UPDATE Whiteboard_Space SET isDeleted = 1 WHERE Entry_ID = ?', [serverId], function (err, rows) {
+                            if (err) {
+                                console.log('BOARD: Error while performing erase query. ' + err);
+                                return connection.release();
+                            }
+                            var msg = { header: ComponentBase.BaseMessageTypes.DELETE, payload: null };
+                            var msgCont = {
+                                serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg
+                            };
+                            socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
+                            connection.release();
+                        });
                     }
                 });
             }
@@ -227,17 +223,15 @@ var ComponentBase;
             }
             else {
                 connection.query('SELECT User_ID FROM Whiteboard_Space WHERE Entry_ID = ? AND User_ID = ?', [serverId, boardConnData.userId], function (err, rows) {
-                    if (!err) {
-                        if (rows[0] != null && rows[0] != undefined && boardConnData.allowUserEdit) {
-                            self.handleLock(serverId, connection, socket, boardConnData);
-                        }
-                        else {
-                            self.handleRefuse(serverId, socket, boardConnData);
-                            connection.release();
-                        }
+                    if (err) {
+                        console.log('BOARD: Error while performing lock:findUser query. ' + err);
+                        self.handleRefuse(serverId, socket, boardConnData);
+                        return connection.release();
+                    }
+                    if (rows[0] != null && rows[0] != undefined && boardConnData.allowUserEdit) {
+                        self.handleLock(serverId, connection, socket, boardConnData);
                     }
                     else {
-                        console.log('BOARD: Error while performing lock:findUser query. ' + err);
                         self.handleRefuse(serverId, socket, boardConnData);
                         connection.release();
                     }
@@ -250,38 +244,34 @@ var ComponentBase;
                 if (err) {
                     console.log('BOARD: Error getting lock state. ' + err);
                     self.handleRefuse(serverId, socket, boardConnData);
-                    connection.release();
+                    return connection.release();
+                }
+                if (!rows[0].Edit_Lock) {
+                    connection.query('UPDATE Whiteboard_Space SET Edit_Lock = ? WHERE Entry_ID = ?', [boardConnData.userId, serverId], function (err, rows) {
+                        if (err) {
+                            console.log('BOARD: Error while performing move query. ' + err);
+                            self.handleRefuse(serverId, socket, boardConnData);
+                            return connection.rollback(function () { console.error(err); connection.release(); });
+                        }
+                        var idMsg = { header: ComponentBase.BaseMessageTypes.LOCKID, payload: null };
+                        var idMsgCont = {
+                            serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: idMsg
+                        };
+                        socket.emit('MSG-COMPONENT', idMsgCont);
+                        var payload = {
+                            userId: boardConnData.userId
+                        };
+                        var msg = { header: ComponentBase.BaseMessageTypes.LOCK, payload: payload };
+                        var msgCont = {
+                            serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg
+                        };
+                        socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
+                        connection.release();
+                    });
                 }
                 else {
-                    if (!rows[0].Edit_Lock) {
-                        connection.query('UPDATE Whiteboard_Space SET Edit_Lock = ? WHERE Entry_ID = ?', [boardConnData.userId, serverId], function (err, rows) {
-                            if (!err) {
-                                var idMsg = { header: ComponentBase.BaseMessageTypes.LOCKID, payload: null };
-                                var idMsgCont = {
-                                    serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: idMsg
-                                };
-                                socket.emit('MSG-COMPONENT', idMsgCont);
-                                var payload = {
-                                    userId: boardConnData.userId
-                                };
-                                var msg = { header: ComponentBase.BaseMessageTypes.LOCK, payload: payload };
-                                var msgCont = {
-                                    serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg
-                                };
-                                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
-                                connection.release();
-                            }
-                            else {
-                                console.log('BOARD: Error while performing move query. ' + err);
-                                self.handleRefuse(serverId, socket, boardConnData);
-                                return connection.rollback(function () { console.error(err); connection.release(); });
-                            }
-                        });
-                    }
-                    else {
-                        self.handleRefuse(serverId, socket, boardConnData);
-                        connection.release();
-                    }
+                    self.handleRefuse(serverId, socket, boardConnData);
+                    connection.release();
                 }
             });
         };
@@ -297,18 +287,16 @@ var ComponentBase;
             connection.query('SELECT Edit_Lock FROM Whiteboard_Space WHERE Entry_ID = ?', [serverId], function (err, rows, fields) {
                 if (err) {
                     console.log('BOARD: Error releasing lock state. ' + err);
+                    return connection.release();
+                }
+                if (rows[0] == null || rows[0] == undefined) {
                     connection.release();
                 }
+                else if (rows[0].Edit_Lock == boardConnData.userId) {
+                    self.handleRelease(serverId, connection, socket, boardConnData);
+                }
                 else {
-                    if (rows[0] == null || rows[0] == undefined) {
-                        connection.release();
-                    }
-                    else if (rows[0].Edit_Lock == boardConnData.userId) {
-                        self.handleRelease(serverId, connection, socket, boardConnData);
-                    }
-                    else {
-                        connection.release();
-                    }
+                    connection.release();
                 }
             });
         };
@@ -316,14 +304,13 @@ var ComponentBase;
             connection.query('UPDATE Whiteboard_Space SET Edit_Lock = 0 WHERE Entry_ID = ?', [serverId], function (err, rows, fields) {
                 if (err) {
                     console.log('BOARD: Error while updating lock state. ' + err);
+                    return connection.release();
                 }
-                else {
-                    var msg = { header: ComponentBase.BaseMessageTypes.RELEASE, payload: null };
-                    var msgCont = {
-                        serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg
-                    };
-                    socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
-                }
+                var msg = { header: ComponentBase.BaseMessageTypes.RELEASE, payload: null };
+                var msgCont = {
+                    serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg
+                };
+                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
                 connection.release();
             });
         };
@@ -334,35 +321,31 @@ var ComponentBase;
             }
             else {
                 connection.query('SELECT User_ID FROM Whiteboard_Space WHERE Entry_ID = ? AND User_ID = ?', [serverId, boardConnData.userId], function (err, rows) {
-                    if (!err) {
-                        if (rows[0] != null && rows[0] != undefined && boardConnData.allowUserEdit) {
-                            self.handleResize(message, serverId, connection, socket, boardConnData);
-                        }
-                    }
-                    else {
+                    if (err) {
                         console.log('BOARD: Error while performing resize:findUser query. ' + err);
-                        connection.release();
+                        return connection.release();
+                    }
+                    if (rows[0] != null && rows[0] != undefined && boardConnData.allowUserEdit) {
+                        self.handleResize(message, serverId, connection, socket, boardConnData);
                     }
                 });
             }
         };
         Component.prototype.handleResize = function (message, serverId, connection, socket, boardConnData) {
             connection.query('UPDATE Whiteboard_Space SET Width = ?, Height = ?, Edit_Time = CURRENT_TIMESTAMP WHERE Entry_ID = ?', [message.width, message.height, serverId], function (err, rows) {
-                if (!err) {
-                    var payload = {
-                        width: message.width, height: message.height, editTime: new Date()
-                    };
-                    var msg = { header: ComponentBase.BaseMessageTypes.RESIZE, payload: payload };
-                    var msgCont = {
-                        serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg
-                    };
-                    socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
-                    connection.release();
-                }
-                else {
+                if (err) {
                     console.log('BOARD: Error while performing resize query. ' + err);
                     return connection.rollback(function () { console.error(err); connection.release(); });
                 }
+                var payload = {
+                    width: message.width, height: message.height, editTime: new Date()
+                };
+                var msg = { header: ComponentBase.BaseMessageTypes.RESIZE, payload: payload };
+                var msgCont = {
+                    serverId: serverId, userId: boardConnData.userId, type: 'ANY', payload: msg
+                };
+                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
+                connection.release();
             });
         };
         return Component;

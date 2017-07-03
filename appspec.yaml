@@ -11,5 +11,5 @@ os: linux
 #   "files" section altogether. A blank or incomplete "files" section
 #   may cause associated deployments to fail.
 files:
-  - source: comm_server.js
+  - source: app.js
     destination: /opt

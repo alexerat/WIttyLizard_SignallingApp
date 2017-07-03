@@ -62,6 +62,8 @@ var FreeCurve;
          *  @param {BoardConnection} boardConnData - The connection data associated with this socket.
          */
         ComponentClass.prototype.sessionEnd = function (boardConnData) {
+            // TODO: Remove debug code.
+            console.log('Session end recieved for free curve.');
             var userData = this.componentData[boardConnData.userId];
             if (userData != undefined && userData != null) {
                 userData.numRecieved = null;
