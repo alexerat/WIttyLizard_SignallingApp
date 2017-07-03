@@ -700,108 +700,99 @@ let processJoinBor = function(socket: SocketIO.Socket, connection) : void
 
 let chkSessionBor = function(err, rows, fields, socket: SocketIO.Socket, connection) : void
 {
-    if (!err)
-    {
-        if (rows[0])
-        {
-
-            if (rows[0].Start_Time && rows[0].Session_Length)
-            {
-                boardConnData[socket.id].startTime = rows[0].Start_Time;
-                boardConnData[socket.id].sessLength = rows[0].Session_Length * 1000;
-
-                // TODO: Add time checks.
-
-                if (rows[0].Host_Join_Time)
-                {
-                    processJoinBor(socket, connection);
-                }
-            }
-            else
-            {
-                socket.emit('ERROR', 'Session failed to start.');
-                console.log('BOARD: Session failed to start.');
-                connection.release();
-                socket.disconnect();
-            }
-        }
-        else
-        {
-            socket.emit('ERROR', 'DATABASE ERROR: Unexpected Result.');
-            console.log('BOARD: Session time produced an unexpected result.');
-            connection.release();
-            socket.disconnect();
-        }
-    }
-    else
+    if (err)
     {
         socket.emit('ERROR', 'DATABASE ERROR: Session Check. ' + err);
         console.log('BOARD: Error while performing session query. ' + err);
         connection.release();
         socket.disconnect();
+        return;
+    }
+
+    if (rows[0] == null || rows[0] == undefined)
+    {
+        socket.emit('ERROR', 'DATABASE ERROR: Unexpected Result.');
+        console.log('BOARD: Session time produced an unexpected result.');
+        connection.release();
+        socket.disconnect();
+        return;
+    }
+
+    if (rows[0].Start_Time == null || rows[0].Start_Time == undefined || rows[0].Session_Length == null || rows[0].Session_Length == undefined)
+    {
+        socket.emit('ERROR', 'Session failed to start.');
+        console.log('BOARD: Session failed to start.');
+        connection.release();
+        socket.disconnect();
+        return;
+    }
+
+    boardConnData[socket.id].startTime = rows[0].Start_Time;
+    boardConnData[socket.id].sessLength = rows[0].Session_Length * 1000;
+
+    // TODO: Add time checks.
+
+    if (rows[0].Host_Join_Time)
+    {
+        processJoinBor(socket, connection);
     }
 };
 
 let chkParticipantBor = function(err, rows, fields, socket: SocketIO.Socket, connection: MySql.SQLConnection) : void
 {
-    if (!err)
-    {
-        if (rows[0])
-        {
-            connection.query('SELECT Start_Time, Session_Length, Host_Join_Time FROM Tutorial_Room_Table WHERE Room_ID = ?',
-            [boardConnData[socket.id].roomId],
-            (err, rows, fields) =>
-            {
-                chkSessionBor(err, rows, fields, socket, connection);
-            });
-        }
-        else
-        {
-            socket.emit('ERROR', 'User not allowed.');
-            console.log('BOARD: User not permitted to this session.');
-            connection.release();
-            socket.disconnect();
-        }
-    }
-    else
+    if (err)
     {
         socket.emit('ERROR', 'DATABASE ERROR: Participant Check. ' + err);
         console.log('BOARD: Error while performing participant query. ' + err);
         connection.release();
         socket.disconnect();
+        return;
     }
 
+    if (rows[0] == null || rows[0] == undefined)
+    {
+        socket.emit('ERROR', 'User not allowed.');
+        console.log('BOARD: User not permitted to this session.');
+        connection.release();
+        socket.disconnect();
+        return;
+    }
+
+    connection.query('SELECT Start_Time, Session_Length, Host_Join_Time FROM Tutorial_Room_Table WHERE Room_ID = ?',
+    [boardConnData[socket.id].roomId],
+    (err, rows, fields) =>
+    {
+        chkSessionBor(err, rows, fields, socket, connection);
+    });
 };
 
 let findRoomBor = function(err, rows, fields, socket: SocketIO.Socket, connection: MySql.SQLConnection, roomToken: string) : void
 {
-    if (!err)
-    {
-        if (rows[0])
-        {
-            boardConnData[socket.id].roomId = rows[0].Room_ID;
-            connection.query('SELECT * FROM Room_Participants WHERE Room_ID = ? AND User_ID = ?',
-            [boardConnData[socket.id].roomId, boardConnData[socket.id].userId],
-            (err, rows, fields) =>
-            {
-                chkParticipantBor(err, rows, fields, socket, connection);
-            });
-        }
-        else
-        {
-            socket.emit('ERROR', 'Room does not exist.');
-            console.log('BOARD: Room ' + connection.escape(roomToken) + ' does not exist.');
-            connection.release();
-            socket.disconnect();
-        }
-    }
-    else
+    if (err)
     {
         socket.emit('ERROR', 'DATABASE ERROR: Room Check. ' + err);
         console.log('BOARD: Error while performing room query. ' + err);
         connection.release();
         socket.disconnect();
+        return;
     }
+
+    if (rows[0] == null || rows[0] == undefined)
+    {
+        socket.emit('ERROR', 'Room does not exist.');
+        console.log('BOARD: Room ' + connection.escape(roomToken) + ' does not exist.');
+        connection.release();
+        socket.disconnect();
+        return;
+    }
+
+    boardConnData[socket.id].roomId = rows[0].Room_ID;
+    connection.query('SELECT * FROM Room_Participants WHERE Room_ID = ? AND User_ID = ?',
+    [boardConnData[socket.id].roomId, boardConnData[socket.id].userId],
+    (err, rows, fields) =>
+    {
+        chkParticipantBor(err, rows, fields, socket, connection);
+    });
 };
 
 let cleanConnection = function(socketID: string, socket: SocketIO.Socket) : void
@@ -830,26 +821,24 @@ let handleDeleteMessages = (serverIds: Array<number>, socket: SocketIO.Socket, c
     {
         connection.commit((err) =>
         {
-            if (!err)
-            {
-                let payload = [];
-                for(let i = 0; i < serverIds.length; i++)
-                {
-                    payload.push(serverIds[i]);
-                }
-
-                let msg: ServerMessage = { header: ComponentBase.BaseMessageTypes.DELETE, payload: payload };
-                let msgCont: ServerMessageContainer =
-                {
-                    serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
-                };
-                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
-                connection.release();
-            }
-            else
+            if (err)
             {
                 return connection.rollback(() => { console.error('BOARD: ' + err); connection.release(); });
             }
+
+            let payload = [];
+            for(let i = 0; i < serverIds.length; i++)
+            {
+                payload.push(serverIds[i]);
+            }
+
+            let msg: ServerMessage = { header: ComponentBase.BaseMessageTypes.DELETE, payload: payload };
+            let msgCont: ServerMessageContainer =
+            {
+                serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
+            };
+            socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
+            connection.release();
         });
     };
 
@@ -861,14 +850,12 @@ let handleDeleteMessages = (serverIds: Array<number>, socket: SocketIO.Socket, c
             [serverIds[index]],
             (err, rows) =>
             {
-                if (!err)
-                {
-                    updateFunc(serverIds, connection, socket, boardConnData, commitCallback, ++index);
-                }
-                else
+                if (err)
                 {
                     return connection.rollback(() => { console.error('BOARD: ' + err); connection.release(); });
                 }
+
+                updateFunc(serverIds, connection, socket, boardConnData, commitCallback, ++index);
             });
         }
         else
@@ -882,14 +869,12 @@ let handleDeleteMessages = (serverIds: Array<number>, socket: SocketIO.Socket, c
         connection.beginTransaction(
         (err) =>
         {
-            if (!err)
-            {
-                updateFunc(serverIds, connection, socket, boardConnData, commitFunc);
-            }
-            else
+            if (err)
             {
                 return connection.rollback(() => { console.error('BOARD: ' + err); connection.release(); });
             }
+
+            updateFunc(serverIds, connection, socket, boardConnData, commitFunc);
         });
     }
     else if(boardConnData.allowUserEdit)
@@ -901,21 +886,18 @@ let handleDeleteMessages = (serverIds: Array<number>, socket: SocketIO.Socket, c
                 connection.query('SELECT Entry_ID FROM Whiteboard_Space WHERE Entry_ID = ? AND User_ID = ?', [serverIds[index]],
                 (err, rows) =>
                 {
-                    if (!err)
-                    {
-                        if(rows[0] != null && rows[0] != undefined)
-                        {
-                            resolvedList.push(serverIds[index]);
-                        }
-
-                        selectFunc(serverIds, updateList, connection, socket, boardConnData, ++index, resolvedList);
-                    }
-                    else
+                    if (err)
                     {
                         console.log('BOARD: Error while performing delete:findUser query. ' + err);
-                        connection.release();
-                        return;
+                        return connection.release();
                     }
+
+                    if(rows[0] != null && rows[0] != undefined)
+                    {
+                        resolvedList.push(serverIds[index]);
+                    }
+
+                    selectFunc(serverIds, updateList, connection, socket, boardConnData, ++index, resolvedList);
                 });
             }
             else
@@ -923,14 +905,12 @@ let handleDeleteMessages = (serverIds: Array<number>, socket: SocketIO.Socket, c
                 connection.beginTransaction(
                 (err) =>
                 {
-                    if (!err)
-                    {
-                        updateFunc(resolvedList, connection, socket, boardConnData, commitFunc);
-                    }
-                    else
+                    if (err)
                     {
                         return connection.rollback(() => { console.error('BOARD: ' + err); connection.release(); });
                     }
+
+                    updateFunc(resolvedList, connection, socket, boardConnData, commitFunc);
                 });
             }
         };
@@ -943,26 +923,24 @@ let handleRestoreMessages = (serverIds: Array<number>, socket: SocketIO.Socket, 
     {
         connection.commit((err) =>
         {
-            if (!err)
-            {
-                let payload = [];
-                for(let i = 0; i < serverIds.length; i++)
-                {
-                    payload.push(serverIds[i]);
-                }
-
-                let msg: ServerMessage = { header: ComponentBase.BaseMessageTypes.RESTORE, payload: payload };
-                let msgCont: ServerMessageContainer =
-                {
-                    serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
-                };
-                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
-                connection.release();
-            }
-            else
+            if (err)
             {
                 return connection.rollback(() => { console.error('BOARD: ' + err); connection.release(); });
             }
+
+            let payload = [];
+            for(let i = 0; i < serverIds.length; i++)
+            {
+                payload.push(serverIds[i]);
+            }
+
+            let msg: ServerMessage = { header: ComponentBase.BaseMessageTypes.RESTORE, payload: payload };
+            let msgCont: ServerMessageContainer =
+            {
+                serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
+            };
+            socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
+            connection.release();
         });
     };
 
@@ -974,14 +952,12 @@ let handleRestoreMessages = (serverIds: Array<number>, socket: SocketIO.Socket, 
             [serverIds[index]],
             (err, rows) =>
             {
-                if (!err)
-                {
-                    updateFunc(serverIds, connection, socket, boardConnData, commitCallback, ++index);
-                }
-                else
+                if (err)
                 {
                     return connection.rollback(() => { console.error('BOARD: ' + err); connection.release(); });
                 }
+
+                updateFunc(serverIds, connection, socket, boardConnData, commitCallback, ++index);
             });
         }
         else
@@ -995,14 +971,12 @@ let handleRestoreMessages = (serverIds: Array<number>, socket: SocketIO.Socket, 
         connection.beginTransaction(
         (err) =>
         {
-            if (!err)
-            {
-                updateFunc(serverIds, connection, socket, boardConnData, commitFunc);
-            }
-            else
+            if (err)
             {
                 return connection.rollback(() => { console.error('BOARD: ' + err); connection.release(); });
             }
+
+            updateFunc(serverIds, connection, socket, boardConnData, commitFunc);
         });
     }
     else if(boardConnData.allowUserEdit)
@@ -1016,21 +990,18 @@ let handleRestoreMessages = (serverIds: Array<number>, socket: SocketIO.Socket, 
                 connection.query('SELECT Entry_ID FROM Whiteboard_Space WHERE Entry_ID = ? AND User_ID = ?', [serverIds[index]],
                 (err, rows) =>
                 {
-                    if (!err)
-                    {
-                        if(rows[0] != null && rows[0] != undefined)
-                        {
-                            resolvedList.push(serverIds[index]);
-                        }
-
-                        selectFunc(serverIds, updateList, connection, socket, boardConnData, ++index, resolvedList);
-                    }
-                    else
+                    if (err)
                     {
                         console.log('BOARD: Error while performing restore:findUser query. ' + err);
-                        connection.release();
-                        return;
+                        return connection.release();
                     }
+
+                    if(rows[0] != null && rows[0] != undefined)
+                    {
+                        resolvedList.push(serverIds[index]);
+                    }
+
+                    selectFunc(serverIds, updateList, connection, socket, boardConnData, ++index, resolvedList);
                 });
             }
             else
@@ -1038,14 +1009,12 @@ let handleRestoreMessages = (serverIds: Array<number>, socket: SocketIO.Socket, 
                 connection.beginTransaction(
                 (err) =>
                 {
-                    if (!err)
-                    {
-                        updateFunc(resolvedList, connection, socket, boardConnData, commitFunc);
-                    }
-                    else
+                    if (err)
                     {
                         return connection.rollback(() => { console.error('BOARD: ' + err); connection.release(); });
                     }
+
+                    updateFunc(resolvedList, connection, socket, boardConnData, commitFunc);
                 });
             }
         };
@@ -1081,21 +1050,18 @@ let handleMoveMessages =
                 connection.query('SELECT Entry_ID FROM Whiteboard_Space WHERE Entry_ID = ? AND User_ID = ?', [messages[index].id],
                 (err, rows) =>
                 {
-                    if (!err)
-                    {
-                        if(rows[0] != null && rows[0] != undefined)
-                        {
-                            resolvedList.push(updateList[index]);
-                        }
-
-                        selectFunc(messages, updateList, connection, socket, boardConnData, ++index, resolvedList);
-                    }
-                    else
+                    if (err)
                     {
                         console.log('BOARD: Error while performing move:findUser query. ' + err);
-                        connection.release();
-                        return;
+                        return connection.release();
                     }
+
+                    if(rows[0] != null && rows[0] != undefined)
+                    {
+                        resolvedList.push(updateList[index]);
+                    }
+
+                    selectFunc(messages, updateList, connection, socket, boardConnData, ++index, resolvedList);
                 });
             }
             else
@@ -1112,27 +1078,25 @@ let handleMoves = (updates: Array<Array<number>>, connection: MySql.SQLConnectio
     {
         connection.commit((err) =>
         {
-            if (!err)
-            {
-                let payload = [];
-
-                for(let i = 0; i < updates.length; i++)
-                {
-                    payload.push({ id: updates[i][2], x: updates[i][0], y: updates[i][1], editTime: new Date() });
-                }
-
-                let msg: ServerMessage = { header: ComponentBase.BaseMessageTypes.MOVE, payload: payload };
-                let msgCont: ServerMessageContainer =
-                {
-                    serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
-                };
-                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
-                connection.release();
-            }
-            else
+            if (err)
             {
                 return connection.rollback(() => { console.error('BOARD: ' + err); connection.release(); });
             }
+
+            let payload = [];
+
+            for(let i = 0; i < updates.length; i++)
+            {
+                payload.push({ id: updates[i][2], x: updates[i][0], y: updates[i][1], editTime: new Date() });
+            }
+
+            let msg: ServerMessage = { header: ComponentBase.BaseMessageTypes.MOVE, payload: payload };
+            let msgCont: ServerMessageContainer =
+            {
+                serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
+            };
+            socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
+            connection.release();
         });
     };
 
@@ -1146,14 +1110,12 @@ let handleMoves = (updates: Array<Array<number>>, connection: MySql.SQLConnectio
             updates[index],
             (err, rows) =>
             {
-                if (!err)
-                {
-                    updateFunc(updates, connection, socket, boardConnData, commitCallback, ++index);
-                }
-                else
+                if (err)
                 {
                     return connection.rollback(() => { console.error('BOARD: ' + err); connection.release(); });
                 }
+
+                updateFunc(updates, connection, socket, boardConnData, commitCallback, ++index);
             });
         }
         else
@@ -1166,14 +1128,12 @@ let handleMoves = (updates: Array<Array<number>>, connection: MySql.SQLConnectio
     connection.beginTransaction(
     (err) =>
     {
-        if (!err)
+        if (err)
         {
-            updateFunc(updates, connection, socket, boardConnData, commitFunc);
+            return connection.rollback(() => { console.error('BOARD: ' + err); connection.release(); });   
         }
-        else
-        {
-            return connection.rollback(() => { console.error('BOARD: ' + err); connection.release(); });
-        }
+
+        updateFunc(updates, connection, socket, boardConnData, commitFunc);
     });
 
 }
@@ -1597,29 +1557,21 @@ let zone;
 
 let checkServers = function(err, rows, connection)
 {
-    if(!err)
+    if(err)
     {
-        if(!rows[0])
+        console.log('Error registering server in list. ' + err);
+        return;
+    }
+
+    if(rows[0] == null || rows[0] == undefined)
+    {
+        connection.query('INSERT INTO Tutorial_Servers(End_Point, Zone) VALUES(?, ?) ', [endPointAddr, zone], (err, rows) =>
         {
-            connection.query('INSERT INTO Tutorial_Servers(End_Point, Zone) VALUES(?, ?) ', [endPointAddr, zone], (err, rows) =>
+            if(err)
             {
-                if(err)
-                {
-                    console.log('Error registering server in list. ' + err);
-                    return connection.release();
-                }
-
-                http.listen(9001, () =>
-                {
-                    console.log("Server listening at", "*:" + 9001);
-                });
-
-                connection.release();
-            });
-        }
-        else
-        {
-            console.log('Server already in list.');
+                console.log('Error registering server in list. ' + err);
+                return connection.release();
+            }
 
             http.listen(9001, () =>
             {
@@ -1627,12 +1579,18 @@ let checkServers = function(err, rows, connection)
             });
 
             connection.release();
-        }
+        });
+        return;
     }
-    else
+ 
+    console.log('Server already in list.');
+
+    http.listen(9001, () =>
     {
-        console.log('Error registering server in list. ' + err);
-    }
+        console.log("Server listening at", "*:" + 9001);
+    });
+
+    connection.release();
 }
 
 let getServerData = function(chunk)
@@ -1658,21 +1616,19 @@ let getServerData = function(chunk)
             if (err)
             {
                 console.log('BOARD: Error while setting database schema. ' + err);
-                connection.release();
+                return connection.release();
             }
-            else
+
+            connection.query('SELECT * FROM Tutorial_Servers WHERE End_Point = ?', [endPointAddr], (err, rows) =>
             {
-                connection.query('SELECT * FROM Tutorial_Servers WHERE End_Point = ?', [endPointAddr], (err, rows) =>
+                if(err)
                 {
-                    if(err)
-                    {
-                        console.log('Error registering server in list. ' + err);
-                        return connection.release();
-                    }
-                    
-                    checkServers(err, rows, connection);
-                });
-            }
+                    console.log('Error registering server in list. ' + err);
+                    return connection.release();
+                }
+                
+                checkServers(err, rows, connection);
+            });
         });
     });
 }

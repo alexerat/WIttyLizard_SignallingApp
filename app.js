@@ -469,79 +469,72 @@ var processJoinBor = function (socket, connection) {
     socket.join(boardConnData[socket.id].roomId.toString());
 };
 var chkSessionBor = function (err, rows, fields, socket, connection) {
-    if (!err) {
-        if (rows[0]) {
-            if (rows[0].Start_Time && rows[0].Session_Length) {
-                boardConnData[socket.id].startTime = rows[0].Start_Time;
-                boardConnData[socket.id].sessLength = rows[0].Session_Length * 1000;
-                // TODO: Add time checks.
-                if (rows[0].Host_Join_Time) {
-                    processJoinBor(socket, connection);
-                }
-            }
-            else {
-                socket.emit('ERROR', 'Session failed to start.');
-                console.log('BOARD: Session failed to start.');
-                connection.release();
-                socket.disconnect();
-            }
-        }
-        else {
-            socket.emit('ERROR', 'DATABASE ERROR: Unexpected Result.');
-            console.log('BOARD: Session time produced an unexpected result.');
-            connection.release();
-            socket.disconnect();
-        }
-    }
-    else {
+    if (err) {
         socket.emit('ERROR', 'DATABASE ERROR: Session Check. ' + err);
         console.log('BOARD: Error while performing session query. ' + err);
         connection.release();
         socket.disconnect();
+        return;
+    }
+    if (rows[0] == null || rows[0] == undefined) {
+        socket.emit('ERROR', 'DATABASE ERROR: Unexpected Result.');
+        console.log('BOARD: Session time produced an unexpected result.');
+        connection.release();
+        socket.disconnect();
+        return;
+    }
+    if (rows[0].Start_Time == null || rows[0].Start_Time == undefined || rows[0].Session_Length == null || rows[0].Session_Length == undefined) {
+        socket.emit('ERROR', 'Session failed to start.');
+        console.log('BOARD: Session failed to start.');
+        connection.release();
+        socket.disconnect();
+        return;
+    }
+    boardConnData[socket.id].startTime = rows[0].Start_Time;
+    boardConnData[socket.id].sessLength = rows[0].Session_Length * 1000;
+    // TODO: Add time checks.
+    if (rows[0].Host_Join_Time) {
+        processJoinBor(socket, connection);
     }
 };
 var chkParticipantBor = function (err, rows, fields, socket, connection) {
-    if (!err) {
-        if (rows[0]) {
-            connection.query('SELECT Start_Time, Session_Length, Host_Join_Time FROM Tutorial_Room_Table WHERE Room_ID = ?', [boardConnData[socket.id].roomId], function (err, rows, fields) {
-                chkSessionBor(err, rows, fields, socket, connection);
-            });
-        }
-        else {
-            socket.emit('ERROR', 'User not allowed.');
-            console.log('BOARD: User not permitted to this session.');
-            connection.release();
-            socket.disconnect();
-        }
-    }
-    else {
+    if (err) {
         socket.emit('ERROR', 'DATABASE ERROR: Participant Check. ' + err);
         console.log('BOARD: Error while performing participant query. ' + err);
         connection.release();
         socket.disconnect();
+        return;
     }
+    if (rows[0] == null || rows[0] == undefined) {
+        socket.emit('ERROR', 'User not allowed.');
+        console.log('BOARD: User not permitted to this session.');
+        connection.release();
+        socket.disconnect();
+        return;
+    }
+    connection.query('SELECT Start_Time, Session_Length, Host_Join_Time FROM Tutorial_Room_Table WHERE Room_ID = ?', [boardConnData[socket.id].roomId], function (err, rows, fields) {
+        chkSessionBor(err, rows, fields, socket, connection);
+    });
 };
 var findRoomBor = function (err, rows, fields, socket, connection, roomToken) {
-    if (!err) {
-        if (rows[0]) {
-            boardConnData[socket.id].roomId = rows[0].Room_ID;
-            connection.query('SELECT * FROM Room_Participants WHERE Room_ID = ? AND User_ID = ?', [boardConnData[socket.id].roomId, boardConnData[socket.id].userId], function (err, rows, fields) {
-                chkParticipantBor(err, rows, fields, socket, connection);
-            });
-        }
-        else {
-            socket.emit('ERROR', 'Room does not exist.');
-            console.log('BOARD: Room ' + connection.escape(roomToken) + ' does not exist.');
-            connection.release();
-            socket.disconnect();
-        }
-    }
-    else {
+    if (err) {
         socket.emit('ERROR', 'DATABASE ERROR: Room Check. ' + err);
         console.log('BOARD: Error while performing room query. ' + err);
         connection.release();
         socket.disconnect();
+        return;
     }
+    if (rows[0] == null || rows[0] == undefined) {
+        socket.emit('ERROR', 'Room does not exist.');
+        console.log('BOARD: Room ' + connection.escape(roomToken) + ' does not exist.');
+        connection.release();
+        socket.disconnect();
+        return;
+    }
+    boardConnData[socket.id].roomId = rows[0].Room_ID;
+    connection.query('SELECT * FROM Room_Participants WHERE Room_ID = ? AND User_ID = ?', [boardConnData[socket.id].roomId, boardConnData[socket.id].userId], function (err, rows, fields) {
+        chkParticipantBor(err, rows, fields, socket, connection);
+    });
 };
 var cleanConnection = function (socketID, socket) {
     console.log('BOARD: Cleaning Connection....');
@@ -559,33 +552,29 @@ var endConnection = function (socketID, socket) {
 var handleDeleteMessages = function (serverIds, socket, connection, boardConnData) {
     var commitFunc = function (serverIds, connection, socket, boardConnData) {
         connection.commit(function (err) {
-            if (!err) {
-                var payload = [];
-                for (var i = 0; i < serverIds.length; i++) {
-                    payload.push(serverIds[i]);
-                }
-                var msg = { header: ComponentBase.BaseMessageTypes.DELETE, payload: payload };
-                var msgCont = {
-                    serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
-                };
-                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
-                connection.release();
-            }
-            else {
+            if (err) {
                 return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
             }
+            var payload = [];
+            for (var i = 0; i < serverIds.length; i++) {
+                payload.push(serverIds[i]);
+            }
+            var msg = { header: ComponentBase.BaseMessageTypes.DELETE, payload: payload };
+            var msgCont = {
+                serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
+            };
+            socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
+            connection.release();
         });
     };
     var updateFunc = function (serverIds, connection, socket, boardConnData, commitCallback, index) {
         if (index === void 0) { index = 0; }
         if (index < serverIds.length) {
             connection.query('UPDATE Whiteboard_Space SET isDeleted = 1 WHERE Entry_ID = ?', [serverIds[index]], function (err, rows) {
-                if (!err) {
-                    updateFunc(serverIds, connection, socket, boardConnData, commitCallback, ++index);
-                }
-                else {
+                if (err) {
                     return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
                 }
+                updateFunc(serverIds, connection, socket, boardConnData, commitCallback, ++index);
             });
         }
         else {
@@ -594,12 +583,10 @@ var handleDeleteMessages = function (serverIds, socket, connection, boardConnDat
     };
     if (boardConnData.isHost || boardConnData.allowAllEdit) {
         connection.beginTransaction(function (err) {
-            if (!err) {
-                updateFunc(serverIds, connection, socket, boardConnData, commitFunc);
-            }
-            else {
+            if (err) {
                 return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
             }
+            updateFunc(serverIds, connection, socket, boardConnData, commitFunc);
         });
     }
     else if (boardConnData.allowUserEdit) {
@@ -608,27 +595,22 @@ var handleDeleteMessages = function (serverIds, socket, connection, boardConnDat
             if (resolvedList === void 0) { resolvedList = []; }
             if (index < serverIds.length) {
                 connection.query('SELECT Entry_ID FROM Whiteboard_Space WHERE Entry_ID = ? AND User_ID = ?', [serverIds[index]], function (err, rows) {
-                    if (!err) {
-                        if (rows[0] != null && rows[0] != undefined) {
-                            resolvedList.push(serverIds[index]);
-                        }
-                        selectFunc_1(serverIds, updateList, connection, socket, boardConnData, ++index, resolvedList);
-                    }
-                    else {
+                    if (err) {
                         console.log('BOARD: Error while performing delete:findUser query. ' + err);
-                        connection.release();
-                        return;
+                        return connection.release();
                     }
+                    if (rows[0] != null && rows[0] != undefined) {
+                        resolvedList.push(serverIds[index]);
+                    }
+                    selectFunc_1(serverIds, updateList, connection, socket, boardConnData, ++index, resolvedList);
                 });
             }
             else {
                 connection.beginTransaction(function (err) {
-                    if (!err) {
-                        updateFunc(resolvedList, connection, socket, boardConnData, commitFunc);
-                    }
-                    else {
+                    if (err) {
                         return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
                     }
+                    updateFunc(resolvedList, connection, socket, boardConnData, commitFunc);
                 });
             }
         };
@@ -637,33 +619,29 @@ var handleDeleteMessages = function (serverIds, socket, connection, boardConnDat
 var handleRestoreMessages = function (serverIds, socket, connection, boardConnData) {
     var commitFunc = function (serverIds, connection, socket, boardConnData) {
         connection.commit(function (err) {
-            if (!err) {
-                var payload = [];
-                for (var i = 0; i < serverIds.length; i++) {
-                    payload.push(serverIds[i]);
-                }
-                var msg = { header: ComponentBase.BaseMessageTypes.RESTORE, payload: payload };
-                var msgCont = {
-                    serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
-                };
-                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
-                connection.release();
-            }
-            else {
+            if (err) {
                 return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
             }
+            var payload = [];
+            for (var i = 0; i < serverIds.length; i++) {
+                payload.push(serverIds[i]);
+            }
+            var msg = { header: ComponentBase.BaseMessageTypes.RESTORE, payload: payload };
+            var msgCont = {
+                serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
+            };
+            socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
+            connection.release();
         });
     };
     var updateFunc = function (serverIds, connection, socket, boardConnData, commitCallback, index) {
         if (index === void 0) { index = 0; }
         if (index < serverIds.length) {
             connection.query('UPDATE Whiteboard_Space SET isDeleted = 0 WHERE Entry_ID = ?', [serverIds[index]], function (err, rows) {
-                if (!err) {
-                    updateFunc(serverIds, connection, socket, boardConnData, commitCallback, ++index);
-                }
-                else {
+                if (err) {
                     return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
                 }
+                updateFunc(serverIds, connection, socket, boardConnData, commitCallback, ++index);
             });
         }
         else {
@@ -672,12 +650,10 @@ var handleRestoreMessages = function (serverIds, socket, connection, boardConnDa
     };
     if (boardConnData.isHost || boardConnData.allowAllEdit) {
         connection.beginTransaction(function (err) {
-            if (!err) {
-                updateFunc(serverIds, connection, socket, boardConnData, commitFunc);
-            }
-            else {
+            if (err) {
                 return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
             }
+            updateFunc(serverIds, connection, socket, boardConnData, commitFunc);
         });
     }
     else if (boardConnData.allowUserEdit) {
@@ -686,27 +662,22 @@ var handleRestoreMessages = function (serverIds, socket, connection, boardConnDa
             if (resolvedList === void 0) { resolvedList = []; }
             if (index < serverIds.length) {
                 connection.query('SELECT Entry_ID FROM Whiteboard_Space WHERE Entry_ID = ? AND User_ID = ?', [serverIds[index]], function (err, rows) {
-                    if (!err) {
-                        if (rows[0] != null && rows[0] != undefined) {
-                            resolvedList.push(serverIds[index]);
-                        }
-                        selectFunc_2(serverIds, updateList, connection, socket, boardConnData, ++index, resolvedList);
-                    }
-                    else {
+                    if (err) {
                         console.log('BOARD: Error while performing restore:findUser query. ' + err);
-                        connection.release();
-                        return;
+                        return connection.release();
                     }
+                    if (rows[0] != null && rows[0] != undefined) {
+                        resolvedList.push(serverIds[index]);
+                    }
+                    selectFunc_2(serverIds, updateList, connection, socket, boardConnData, ++index, resolvedList);
                 });
             }
             else {
                 connection.beginTransaction(function (err) {
-                    if (!err) {
-                        updateFunc(resolvedList, connection, socket, boardConnData, commitFunc);
-                    }
-                    else {
+                    if (err) {
                         return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
                     }
+                    updateFunc(resolvedList, connection, socket, boardConnData, commitFunc);
                 });
             }
         };
@@ -729,17 +700,14 @@ var handleMoveMessages = function (messages, socket, connection, boardConnData) 
             if (resolvedList === void 0) { resolvedList = []; }
             if (index < messages.length) {
                 connection.query('SELECT Entry_ID FROM Whiteboard_Space WHERE Entry_ID = ? AND User_ID = ?', [messages[index].id], function (err, rows) {
-                    if (!err) {
-                        if (rows[0] != null && rows[0] != undefined) {
-                            resolvedList.push(updateList[index]);
-                        }
-                        selectFunc_3(messages, updateList, connection, socket, boardConnData, ++index, resolvedList);
-                    }
-                    else {
+                    if (err) {
                         console.log('BOARD: Error while performing move:findUser query. ' + err);
-                        connection.release();
-                        return;
+                        return connection.release();
                     }
+                    if (rows[0] != null && rows[0] != undefined) {
+                        resolvedList.push(updateList[index]);
+                    }
+                    selectFunc_3(messages, updateList, connection, socket, boardConnData, ++index, resolvedList);
                 });
             }
             else {
@@ -751,33 +719,29 @@ var handleMoveMessages = function (messages, socket, connection, boardConnData) 
 var handleMoves = function (updates, connection, socket, boardConnData) {
     var commitFunc = function (updates, connection, socket, boardConnData) {
         connection.commit(function (err) {
-            if (!err) {
-                var payload = [];
-                for (var i = 0; i < updates.length; i++) {
-                    payload.push({ id: updates[i][2], x: updates[i][0], y: updates[i][1], editTime: new Date() });
-                }
-                var msg = { header: ComponentBase.BaseMessageTypes.MOVE, payload: payload };
-                var msgCont = {
-                    serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
-                };
-                socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
-                connection.release();
-            }
-            else {
+            if (err) {
                 return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
             }
+            var payload = [];
+            for (var i = 0; i < updates.length; i++) {
+                payload.push({ id: updates[i][2], x: updates[i][0], y: updates[i][1], editTime: new Date() });
+            }
+            var msg = { header: ComponentBase.BaseMessageTypes.MOVE, payload: payload };
+            var msgCont = {
+                serverId: null, userId: boardConnData.userId, type: 'ANY', payload: msg
+            };
+            socket.broadcast.to(boardConnData.roomId.toString()).emit('MSG-COMPONENT', msgCont);
+            connection.release();
         });
     };
     var updateFunc = function (updates, connection, socket, boardConnData, commitCallback, index) {
         if (index === void 0) { index = 0; }
         if (index < updates.length) {
             connection.query('UPDATE Whiteboard_Space SET X_Loc = ?, Y_Loc = ?, Edit_Time = CURRENT_TIMESTAMP WHERE Entry_ID = ?', updates[index], function (err, rows) {
-                if (!err) {
-                    updateFunc(updates, connection, socket, boardConnData, commitCallback, ++index);
-                }
-                else {
+                if (err) {
                     return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
                 }
+                updateFunc(updates, connection, socket, boardConnData, commitCallback, ++index);
             });
         }
         else {
@@ -785,12 +749,10 @@ var handleMoves = function (updates, connection, socket, boardConnData) {
         }
     };
     connection.beginTransaction(function (err) {
-        if (!err) {
-            updateFunc(updates, connection, socket, boardConnData, commitFunc);
-        }
-        else {
+        if (err) {
             return connection.rollback(function () { console.error('BOARD: ' + err); connection.release(); });
         }
+        updateFunc(updates, connection, socket, boardConnData, commitFunc);
     });
 };
 /***************************************************************************************************************************************************************
@@ -1072,30 +1034,28 @@ var reqOpt = 'http://metadata.google.internal/computeMetadata/v1/instance/networ
 var endPointAddr;
 var zone;
 var checkServers = function (err, rows, connection) {
-    if (!err) {
-        if (!rows[0]) {
-            connection.query('INSERT INTO Tutorial_Servers(End_Point, Zone) VALUES(?, ?) ', [endPointAddr, zone], function (err, rows) {
-                if (err) {
-                    console.log('Error registering server in list. ' + err);
-                    return connection.release();
-                }
-                http.listen(9001, function () {
-                    console.log("Server listening at", "*:" + 9001);
-                });
-                connection.release();
-            });
-        }
-        else {
-            console.log('Server already in list.');
+    if (err) {
+        console.log('Error registering server in list. ' + err);
+        return;
+    }
+    if (rows[0] == null || rows[0] == undefined) {
+        connection.query('INSERT INTO Tutorial_Servers(End_Point, Zone) VALUES(?, ?) ', [endPointAddr, zone], function (err, rows) {
+            if (err) {
+                console.log('Error registering server in list. ' + err);
+                return connection.release();
+            }
             http.listen(9001, function () {
                 console.log("Server listening at", "*:" + 9001);
             });
             connection.release();
-        }
+        });
+        return;
     }
-    else {
-        console.log('Error registering server in list. ' + err);
-    }
+    console.log('Server already in list.');
+    http.listen(9001, function () {
+        console.log("Server listening at", "*:" + 9001);
+    });
+    connection.release();
 };
 var getServerData = function (chunk) {
     var chunkString = chunk + '';
@@ -1111,17 +1071,15 @@ var getServerData = function (chunk) {
         connection.query('USE Online_Comms', function (err) {
             if (err) {
                 console.log('BOARD: Error while setting database schema. ' + err);
-                connection.release();
+                return connection.release();
             }
-            else {
-                connection.query('SELECT * FROM Tutorial_Servers WHERE End_Point = ?', [endPointAddr], function (err, rows) {
-                    if (err) {
-                        console.log('Error registering server in list. ' + err);
-                        return connection.release();
-                    }
-                    checkServers(err, rows, connection);
-                });
-            }
+            connection.query('SELECT * FROM Tutorial_Servers WHERE End_Point = ?', [endPointAddr], function (err, rows) {
+                if (err) {
+                    console.log('Error registering server in list. ' + err);
+                    return connection.release();
+                }
+                checkServers(err, rows, connection);
+            });
         });
     });
 };
