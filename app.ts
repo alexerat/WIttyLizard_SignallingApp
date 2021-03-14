@@ -38,8 +38,6 @@ const mysql: MySql.MySqlModule = require('mysql');
 
 const typeCheck = require('check-types');
 
-
-
 let dbHost = process.env.DATABASE_HOST;
 let dbUser = process.env.DATABASE_USER;
 let dbPass = process.env.DATABASE_PASSWORD;
@@ -63,6 +61,15 @@ let my_sql_pool = mysql.createPool({
 
 let med_io = io.of('/media');
 let bor_io = io.of('/board');
+
+let PORT = process.argv[2];
+
+if(PORT == null || PORT == undefined)
+{
+    throw new Error('No port given.');
+}
+
+io.set('origins', 'http://127.0.0.1:8000');
 
 app.use(parseCookie('7e501ffeb426888ea59e63aa15b931a7f9d28d24'));
 
@@ -576,9 +583,13 @@ let chkHost = function(err, rows, fields, socket: SocketIO.Socket, connection: M
     }
 
     let currTime = new Date();
+    // TODO: Remove debug code.
+    let timeoutTime = (boardConnData[socket.id].startTime.getTime() + boardConnData[socket.id].sessLength + 600000) - currTime.getTime();
+    console.log('Session length is: ' + boardConnData[socket.id].sessLength);
+    console.log('Timeout set for: ' + timeoutTime);
     setTimeout(() =>
     {
-        console.log('BOARD: Session over.')
+        console.log('BOARD: Session over.');
         socket.disconnect();
     }, (boardConnData[socket.id].startTime.getTime() + boardConnData[socket.id].sessLength + 600000) - currTime.getTime());
 
@@ -632,7 +643,7 @@ let processJoinBor = function(socket: SocketIO.Socket, connection) : void
     boardConnData[socket.id].colour = colour;
 
     clearTimeout(boardConnData[socket.id].sessionTimeout);
-    boardConnData[socket.id].sessionTimeout = setTimeout(endSession, boardConnData[socket.id].sessLength + 1000, socket.id);
+    boardConnData[socket.id].sessionTimeout = setTimeout(endSession, boardConnData[socket.id].sessLength + 10000, socket.id);
 
     let msg : ServerBoardJoinMessage = { userId: boardConnData[socket.id].userId, colour: colour };
     bor_io.to(boardConnData[socket.id].roomId.toString()).emit('JOIN', msg);
@@ -1565,7 +1576,7 @@ let checkServers = function(err, rows, connection)
 
     if(rows[0] == null || rows[0] == undefined)
     {
-        connection.query('INSERT INTO Tutorial_Servers(End_Point, Zone) VALUES(?, ?) ', [endPointAddr, zone], (err, rows) =>
+        connection.query('INSERT INTO Tutorial_Servers(End_Point, Zone, Port) VALUES(?, ?, ?) ', [endPointAddr, zone, PORT], (err, rows) =>
         {
             if(err)
             {
@@ -1573,9 +1584,20 @@ let checkServers = function(err, rows, connection)
                 return connection.release();
             }
 
-            http.listen(9001, () =>
+            http.listen(PORT, () =>
             {
-                console.log("Server listening at", "*:" + 9001);
+                console.log("Server listening at", "*:" + PORT);
+            });
+
+            http.on('request', (req, res) => 
+            { 
+                console.log("Got request.");
+                if(parseInt(req.url.split('ServerCheck=').pop().split('&')[0]) == 1)
+                {
+                    console.log("Got check message.");
+                    res.setHeader("Server-Check", "1");
+                    res.end();
+                }
             });
 
             connection.release();
@@ -1585,9 +1607,19 @@ let checkServers = function(err, rows, connection)
  
     console.log('Server already in list.');
 
-    http.listen(9001, () =>
+    http.listen(PORT, () =>
     {
-        console.log("Server listening at", "*:" + 9001);
+        console.log("Server listening at", "*:" + PORT);
+    });
+    http.on('request', (req, res) => 
+    { 
+        console.log("Got server check request.");
+        if(parseInt(req.url.split('ServerCheck=').pop().split('&')[0]) == 1)
+        {
+            console.log("Got check message.");
+            res.setHeader("server-check", "1");
+            res.end();
+        }
     });
 
     connection.release();
@@ -1619,7 +1651,7 @@ let getServerData = function(chunk)
                 return connection.release();
             }
 
-            connection.query('SELECT * FROM Tutorial_Servers WHERE End_Point = ?', [endPointAddr], (err, rows) =>
+            connection.query('SELECT * FROM Tutorial_Servers WHERE End_Point = ? AND Port = ?', [endPointAddr, PORT], (err, rows) =>
             {
                 if(err)
                 {

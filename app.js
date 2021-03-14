@@ -46,6 +46,11 @@ var my_sql_pool = mysql.createPool({
 });
 var med_io = io.of('/media');
 var bor_io = io.of('/board');
+var PORT = process.argv[2];
+if (PORT == null || PORT == undefined) {
+    throw new Error('No port given.');
+}
+io.set('origins', 'http://127.0.0.1:8000');
 app.use(parseCookie('7e501ffeb426888ea59e63aa15b931a7f9d28d24'));
 /***************************************************************************************************************************************************************
  *  Media signalling server
@@ -390,6 +395,10 @@ var chkHost = function (err, rows, fields, socket, connection) {
         boardConnData[socket.id].isHost = true;
     }
     var currTime = new Date();
+    // TODO: Remove debug code.
+    var timeoutTime = (boardConnData[socket.id].startTime.getTime() + boardConnData[socket.id].sessLength + 600000) - currTime.getTime();
+    console.log('Session length is: ' + boardConnData[socket.id].sessLength);
+    console.log('Timeout set for: ' + timeoutTime);
     setTimeout(function () {
         console.log('BOARD: Session over.');
         socket.disconnect();
@@ -427,7 +436,7 @@ var processJoinBor = function (socket, connection) {
     }
     boardConnData[socket.id].colour = colour;
     clearTimeout(boardConnData[socket.id].sessionTimeout);
-    boardConnData[socket.id].sessionTimeout = setTimeout(endSession, boardConnData[socket.id].sessLength + 1000, socket.id);
+    boardConnData[socket.id].sessionTimeout = setTimeout(endSession, boardConnData[socket.id].sessLength + 10000, socket.id);
     var msg = { userId: boardConnData[socket.id].userId, colour: colour };
     bor_io.to(boardConnData[socket.id].roomId.toString()).emit('JOIN', msg);
     if (bor_io.adapter.rooms[boardConnData[socket.id].roomId]) {
@@ -1039,21 +1048,37 @@ var checkServers = function (err, rows, connection) {
         return;
     }
     if (rows[0] == null || rows[0] == undefined) {
-        connection.query('INSERT INTO Tutorial_Servers(End_Point, Zone) VALUES(?, ?) ', [endPointAddr, zone], function (err, rows) {
+        connection.query('INSERT INTO Tutorial_Servers(End_Point, Zone, Port) VALUES(?, ?, ?) ', [endPointAddr, zone, PORT], function (err, rows) {
             if (err) {
                 console.log('Error registering server in list. ' + err);
                 return connection.release();
             }
-            http.listen(9001, function () {
-                console.log("Server listening at", "*:" + 9001);
+            http.listen(PORT, function () {
+                console.log("Server listening at", "*:" + PORT);
+            });
+            http.on('request', function (req, res) {
+                console.log("Got request.");
+                if (parseInt(req.url.split('ServerCheck=').pop().split('&')[0]) == 1) {
+                    console.log("Got check message.");
+                    res.setHeader("Server-Check", "1");
+                    res.end();
+                }
             });
             connection.release();
         });
         return;
     }
     console.log('Server already in list.');
-    http.listen(9001, function () {
-        console.log("Server listening at", "*:" + 9001);
+    http.listen(PORT, function () {
+        console.log("Server listening at", "*:" + PORT);
+    });
+    http.on('request', function (req, res) {
+        console.log("Got server check request.");
+        if (parseInt(req.url.split('ServerCheck=').pop().split('&')[0]) == 1) {
+            console.log("Got check message.");
+            res.setHeader("server-check", "1");
+            res.end();
+        }
     });
     connection.release();
 };
@@ -1073,7 +1098,7 @@ var getServerData = function (chunk) {
                 console.log('BOARD: Error while setting database schema. ' + err);
                 return connection.release();
             }
-            connection.query('SELECT * FROM Tutorial_Servers WHERE End_Point = ?', [endPointAddr], function (err, rows) {
+            connection.query('SELECT * FROM Tutorial_Servers WHERE End_Point = ? AND Port = ?', [endPointAddr, PORT], function (err, rows) {
                 if (err) {
                     console.log('Error registering server in list. ' + err);
                     return connection.release();

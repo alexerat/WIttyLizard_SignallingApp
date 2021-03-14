@@ -24,7 +24,7 @@ var Upload;
     Upload.MODENAME = 'UPLOAD';
     var urlMod = require('url');
     var typeCheck = require('check-types');
-    var BUCKETURL = 'https://wittylizard-162000.appspot.com';
+    var BUCKETURL = 'https://wittylizard-168912.appspot.com';
     // GOODLE CODE
     var Storage = require('@google-cloud/storage');
     /* AMAZON CODE

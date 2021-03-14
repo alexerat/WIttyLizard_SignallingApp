@@ -14,7 +14,7 @@ namespace Upload {
     const urlMod = require('url');
     const typeCheck = require('check-types');
 
-    const BUCKETURL = 'https://wittylizard-162000.appspot.com';
+    const BUCKETURL = 'https://wittylizard-168912.appspot.com';
     // GOODLE CODE
     let Storage = require('@google-cloud/storage');
     /* AMAZON CODE
